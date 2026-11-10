@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Планировщик</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 500px; margin: 20px auto; padding: 0 15px; }
+    .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+    input { flex: 1; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; }
+    button { padding: 10px 15px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <h2>Мой Планировщик (Тест)</h2>
+  
+  <div class="input-group">
+    <input type="text" id="taskInput" placeholder="Новая задача...">
+    <button onclick="addTask()">+</button>
+  </div>
+
+  <ul id="taskList"></ul>
+
+  <script>
+    const input = document.getElementById('taskInput');
+    const list = document.getElementById('taskList');
+
+    function renderTasks() {
+      const tasks = JSON.parse(localStorage.getItem('test_tasks') || '[]');
+      list.innerHTML = tasks.map((t, index) => 
+        `<li>${t} <button onclick="deleteTask(${index})" style="background:none;color:red;padding:0;">✕</button></li>`
+      ).join('');
+    }
+
+    function addTask() {
+      if (!input.value.trim()) return;
+      const tasks = JSON.parse(localStorage.getItem('test_tasks') || '[]');
+      tasks.push(input.value.trim());
+      localStorage.setItem('test_tasks', JSON.stringify(tasks));
+      input.value = '';
+      renderTasks();
+    }
+
+    function deleteTask(index) {
+      const tasks = JSON.parse(localStorage.getItem('test_tasks') || '[]');
+      tasks.splice(index, 1);
+      localStorage.setItem('test_tasks', JSON.stringify(tasks));
+      renderTasks();
+    }
+
+    renderTasks();
+
+    // Регистрация Service Worker для PWA
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
