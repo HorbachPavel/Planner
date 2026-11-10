@@ -2,11 +2,9 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>FocusFlow</title>
-  <!-- Безопасная, полностью закодированная иконка приложения -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23437060'/%3E%3Ctext x='50' y='65' font-size='50' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3EF%3C/text%3E%3C/svg%3E">
-  <!-- Скрипт Google (будем ждать его загрузки безопасно) -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     :root {
@@ -20,8 +18,7 @@
     
     .auth-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; font-size: 13px; color: #666; background: #eee; padding: 10px 15px; border-radius: var(--radius); }
     .btn-auth { background: var(--accent); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
-    .btn-auth:disabled { background: #999; cursor: default; }
-
+    
     .tabs { display: flex; background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; margin-bottom: 20px; }
     .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; font-weight: 600; border: none; background: transparent; font-size: 14px; }
     .tab.active { background: var(--accent); color: white; border-radius: var(--radius); }
@@ -55,7 +52,7 @@
     .drag-handle { cursor: grab; color: #bbb; user-select: none; font-weight: bold; font-size: 16px; min-width: 20px; text-align: center; }
     .task-flag { font-weight: 900; font-size: 18px; margin-right: -5px; user-select: none; cursor: pointer; }
     .task-title { flex: 1; border: none; outline: none; font-size: 15px; background: transparent; }
-    .task-checkbox { width: 18px; height: 18px; cursor: pointer; border-radius: 50%; border: 1px solid #bbb; appearance: none; display: flex; align-items: center; justify-content: center; }
+    .task-checkbox { min-width: 18px; height: 18px; cursor: pointer; border-radius: 50%; border: 1px solid #bbb; appearance: none; display: flex; align-items: center; justify-content: center; }
     .task-checkbox:checked { background: var(--accent); border-color: var(--accent); }
     
     .person-header { display: flex; align-items: center; gap: 15px; margin-bottom: 5px; }
@@ -69,21 +66,26 @@
     #toast { position: fixed; bottom: -50px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 12px 24px; border-radius: 20px; transition: 0.3s; z-index: 1000; }
     #toast.show { bottom: 20px; }
     .hidden { display: none !important; }
+    
+    /* Блок для отлова критических ошибок */
+    #errorBanner { display: none; background: #b74b4b; color: white; padding: 12px; text-align: center; font-weight: bold; border-radius: 8px; margin-bottom: 15px; }
   </style>
 </head>
 <body>
+  <div id="errorBanner"></div>
+
   <div class="auth-bar">
     <div style="display:flex; gap: 10px; align-items:center;">
       <strong>FocusFlow</strong>
       <span id="syncStatus">Офлайн / Локальное хранилище</span>
     </div>
-    <button id="authBtn" class="btn-auth" onclick="handleAuth()">Включить синхронизацию Google</button>
+    <button id="authBtn" class="btn-auth" onclick="handleAuth()">Включить синхронизацию</button>
   </div>
 
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('work')">Work</button>
-    <button class="tab" onclick="switchTab('personal')">Personal</button>
-    <button class="tab" onclick="switchTab('todiscuss')">To discuss</button>
+    <button id="tab-work" class="tab active" onclick="switchTab('work')">Work</button>
+    <button id="tab-personal" class="tab" onclick="switchTab('personal')">Personal</button>
+    <button id="tab-todiscuss" class="tab" onclick="switchTab('todiscuss')">To discuss</button>
   </div>
 
   <div id="tasks-container">
@@ -135,6 +137,15 @@
   <div id="toast"></div>
 
   <script>
+    // 1. ОТЛОВ КРИТИЧЕСКИХ ОШИБОК
+    window.onerror = function(msg, url, line) {
+      const banner = document.getElementById('errorBanner');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.innerText = `System Error: ${msg} (Line: ${line})`;
+      }
+    };
+
     const CLIENT_ID = '49484425550-6lbhol7vhovnrhosuh3qlahfv9eavgee.apps.googleusercontent.com';
     const SCOPES = 'https://www.googleapis.com/auth/drive.file';
     let tokenClient, accessToken = null, driveFileId = null;
@@ -143,7 +154,21 @@
     let currentView = 'active'; 
     let notesExpanded = true;
     
-    let state = JSON.parse(localStorage.getItem('focusflow_data')) || { tasks: [], people: [], updatedAt: Date.now() };
+    // 2. БЕЗОПАСНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ
+    let state = { tasks: [], people: [], updatedAt: Date.now() };
+    try {
+      const savedData = localStorage.getItem('focusflow_data');
+      if (savedData) {
+        const parsed = JSON.parse(savedData);
+        if (parsed && typeof parsed === 'object') {
+          state.tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+          state.people = Array.isArray(parsed.people) ? parsed.people : [];
+          state.updatedAt = parsed.updatedAt || Date.now();
+        }
+      }
+    } catch (e) {
+      console.error("Corrupted local data", e);
+    }
 
     const GROUPS = ['overdue', 'today', 'tomorrow', 'this_week', 'next_week', 'later'];
     const GROUP_LABELS = { overdue: 'Overdue', today: 'Today', tomorrow: 'Tomorrow', this_week: 'This week', next_week: 'Next week', later: 'Later' };
@@ -153,31 +178,41 @@
       checkDateShift();
       render();
       
-      // Надежное ожидание загрузки скрипта Google
+      // Защищенный таймер ожидания Google API
+      let attempts = 0;
       const checkGSI = setInterval(() => {
+        attempts++;
         if (typeof google !== 'undefined' && google.accounts) {
           clearInterval(checkGSI);
           initGoogleAuth();
+        } else if (attempts > 50) { // Стоп после 5 секунд
+          clearInterval(checkGSI);
+          document.getElementById('syncStatus').innerText = 'API недоступно (Offline/AdBlock)';
         }
       }, 100);
     };
 
     function initGoogleAuth() {
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES,
-        callback: async (response) => {
-          if (response.error) return;
-          accessToken = response.access_token;
-          document.getElementById('authBtn').innerText = 'Синхронизировано';
-          document.getElementById('authBtn').disabled = true;
-          document.getElementById('syncStatus').innerText = 'Проверка облака...';
-          await initDriveSync();
-        },
-      });
+      try {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES,
+          callback: async (response) => {
+            if (response.error) return;
+            accessToken = response.access_token;
+            document.getElementById('authBtn').innerText = 'Синхронизировано';
+            document.getElementById('authBtn').disabled = true;
+            document.getElementById('syncStatus').innerText = 'Проверка облака...';
+            await initDriveSync();
+          },
+        });
+      } catch (e) { console.error('GSI Init Error', e); }
     }
 
-    function handleAuth() { if (tokenClient) tokenClient.requestAccessToken(); }
+    function handleAuth() { 
+      if (tokenClient) tokenClient.requestAccessToken(); 
+      else showError('Google API еще не загрузилось');
+    }
 
     async function initDriveSync() {
       try {
@@ -197,14 +232,16 @@
           if (localTime >= remoteTime && state.tasks.length >= (remoteState.tasks?.length || 0)) {
             await syncToDrive(false);
           } else {
-            state = remoteState;
+            state.tasks = Array.isArray(remoteState.tasks) ? remoteState.tasks : [];
+            state.people = Array.isArray(remoteState.people) ? remoteState.people : [];
+            state.updatedAt = remoteState.updatedAt || Date.now();
             saveLocally(false);
           }
           render();
         } else {
           await syncToDrive(true);
         }
-        document.getElementById('syncStatus').innerText = 'Авто-синхронизация включена';
+        document.getElementById('syncStatus').innerText = 'Синхронизация активна';
         createDailyBackup();
       } catch (err) {
         document.getElementById('syncStatus').innerText = 'Ошибка сети';
@@ -216,30 +253,32 @@
       document.getElementById('syncStatus').innerText = 'Сохранение...';
       state.updatedAt = Date.now();
       
-      const fileContent = JSON.stringify(state);
-      if (isNew || !driveFileId) {
-        const form = new FormData();
-        form.append('metadata', new Blob([JSON.stringify({ name: 'focusflow_data.json', mimeType: 'application/json' })], { type: 'application/json' }));
-        form.append('file', new Blob([fileContent], { type: 'application/json' }));
-        const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form });
-        const file = await res.json();
-        driveFileId = file.id;
-      } else {
-        await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
-          method: 'PATCH', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: fileContent
-        });
-      }
-      document.getElementById('syncStatus').innerText = 'Сохранено в GDrive';
+      try {
+        const fileContent = JSON.stringify(state);
+        if (isNew || !driveFileId) {
+          const form = new FormData();
+          form.append('metadata', new Blob([JSON.stringify({ name: 'focusflow_data.json', mimeType: 'application/json' })], { type: 'application/json' }));
+          form.append('file', new Blob([fileContent], { type: 'application/json' }));
+          const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form });
+          const file = await res.json();
+          driveFileId = file.id;
+        } else {
+          await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+            method: 'PATCH', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: fileContent
+          });
+        }
+        document.getElementById('syncStatus').innerText = 'Сохранено в GDrive';
+      } catch(e) { document.getElementById('syncStatus').innerText = 'Сбой сохранения'; }
     }
 
     async function createDailyBackup() {
       if (!accessToken) return;
       const today = new Date().toISOString().split('T')[0];
       if (localStorage.getItem('focusflow_last_backup') === today) return;
-      const form = new FormData();
-      form.append('metadata', new Blob([JSON.stringify({ name: `focusflow_backup_${today}.json`, mimeType: 'application/json' })], { type: 'application/json' }));
-      form.append('file', new Blob([JSON.stringify(state)], { type: 'application/json' }));
       try {
+        const form = new FormData();
+        form.append('metadata', new Blob([JSON.stringify({ name: `focusflow_backup_${today}.json`, mimeType: 'application/json' })], { type: 'application/json' }));
+        form.append('file', new Blob([JSON.stringify(state)], { type: 'application/json' }));
         await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form });
         localStorage.setItem('focusflow_last_backup', today);
       } catch(e) {}
@@ -252,27 +291,36 @@
     }
 
     function checkDateShift() {
-      const today = new Date().toDateString();
-      const lastDate = localStorage.getItem('focusflow_last_date');
-      if (!lastDate) { localStorage.setItem('focusflow_last_date', today); return; }
-      if (lastDate !== today) {
-        const daysDiff = Math.floor((new Date(today) - new Date(lastDate)) / 86400000);
-        let shifted = false;
-        state.tasks.forEach(t => {
-          if (t.status === 'active') {
-            if (t.date === 'today') { t.date = 'overdue'; shifted = true; }
-            else if (t.date === 'tomorrow') { t.date = daysDiff === 1 ? 'today' : 'overdue'; shifted = true; }
-          }
-        });
-        if (shifted) saveLocally();
-        localStorage.setItem('focusflow_last_date', today);
-      }
+      try {
+        const today = new Date().toDateString();
+        const lastDate = localStorage.getItem('focusflow_last_date');
+        if (!lastDate) { localStorage.setItem('focusflow_last_date', today); return; }
+        if (lastDate !== today) {
+          const daysDiff = Math.floor((new Date(today) - new Date(lastDate)) / 86400000);
+          let shifted = false;
+          state.tasks.forEach(t => {
+            if (t && t.status === 'active') {
+              if (t.date === 'today') { t.date = 'overdue'; shifted = true; }
+              else if (t.date === 'tomorrow') { t.date = daysDiff === 1 ? 'today' : 'overdue'; shifted = true; }
+            }
+          });
+          if (shifted) saveLocally();
+          localStorage.setItem('focusflow_last_date', today);
+        }
+      } catch(e) { console.error(e); }
     }
 
+    // 3. БЕЗОПАСНОЕ ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК (Без использования event.target)
     function switchTab(tab) {
       currentTab = tab;
+      
+      // Сбрасываем все вкладки
       document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-      event.target.classList.add('active');
+      
+      // Активируем нужную вкладку по явному ID
+      const activeBtn = document.getElementById('tab-' + tab);
+      if (activeBtn) activeBtn.classList.add('active');
+      
       document.getElementById('tasks-container').classList.toggle('hidden', tab === 'todiscuss');
       document.getElementById('todiscuss-container').classList.toggle('hidden', tab !== 'todiscuss');
       render();
@@ -303,22 +351,22 @@
     function addTask() {
       const title = document.getElementById('taskInput').value.trim();
       if (!title) return;
-      if (state.tasks.some(t => t.tab === currentTab && t.status === 'active' && t.title.toLowerCase() === title.toLowerCase())) {
+      if (state.tasks.some(t => t && t.tab === currentTab && t.status === 'active' && (t.title||'').toLowerCase() === title.toLowerCase())) {
         return showError('Задача с таким именем уже открыта.');
       }
       const selectedDate = document.getElementById('taskDate').value;
-      state.tasks.unshift({ id: Date.now().toString(), tab: currentTab, title, date: selectedDate, status: 'active', flag: null, completedAt: null });
+      state.tasks.unshift({ id: Date.now().toString(), tab: currentTab, title: title, date: selectedDate, status: 'active', flag: null, completedAt: null });
       document.getElementById('taskInput').value = '';
       document.getElementById('taskDate').value = 'today';
       saveLocally(); render();
     }
 
     function toggleTaskStatus(id) {
-      const task = state.tasks.find(t => t.id === id);
+      const task = state.tasks.find(t => t && t.id === id);
       if (task) {
         if (task.status === 'active') { task.status = 'done'; task.completedAt = Date.now(); } 
         else {
-          if (state.tasks.some(t => t.id !== id && t.tab === task.tab && t.status === 'active' && t.title.toLowerCase() === task.title.toLowerCase())) {
+          if (state.tasks.some(t => t && t.id !== id && t.tab === task.tab && t.status === 'active' && (t.title||'').toLowerCase() === (task.title||'').toLowerCase())) {
             return showError('Нельзя вернуть: задача уже активна.');
           }
           task.status = 'active'; task.completedAt = null;
@@ -326,137 +374,3 @@
         saveLocally(); render();
       }
     }
-
-    function updateTaskDate(id, newDate) {
-      const task = state.tasks.find(t => t.id === id);
-      if (task) {
-        task.date = newDate;
-        state.tasks = state.tasks.filter(t => t.id !== id);
-        state.tasks.unshift(task);
-        saveLocally(); render();
-      }
-    }
-
-    function updateTaskTitle(id, val) {
-      const task = state.tasks.find(t => t.id === id);
-      if (task && val.trim()) { task.title = val.trim(); saveLocally(); }
-    }
-
-    function toggleFlag(id) {
-      const task = state.tasks.find(t => t.id === id);
-      if (task.flag) task.flag = null;
-      else {
-        const used = state.tasks.filter(t => t.tab === currentTab && t.status === 'active' && t.flag).map(t => t.flag);
-        const avail = PALETTE.filter(c => !used.includes(c));
-        task.flag = avail.length > 0 ? avail[0] : PALETTE[0];
-      }
-      saveLocally(); render();
-    }
-
-    function completeNowTask() {
-      const active = state.tasks.filter(t => t.tab === currentTab && t.status === 'active');
-      const sorted = [...active].sort((a, b) => GROUPS.indexOf(a.date) - GROUPS.indexOf(b.date));
-      if (sorted.length > 0) toggleTaskStatus(sorted[0].id);
-    }
-
-    // === TO DISCUSS ===
-    function addPerson() {
-      const input = document.getElementById('personInput');
-      if (!input.value.trim()) return;
-      state.people.unshift({ id: 'p_'+Date.now(), name: input.value.trim(), isPinned: false, notes: [''] });
-      input.value = ''; saveLocally(); render();
-    }
-
-    function deletePerson(id) { state.people = state.people.filter(p => p.id !== id); saveLocally(); render(); }
-    function updatePersonName(id, val) { const p = state.people.find(x => x.id === id); if (p && val.trim()) { p.name = val.trim(); saveLocally(); } }
-    function toggleNotes() { notesExpanded = !notesExpanded; render(); }
-    function updateNote(pId, idx, val) { const p = state.people.find(x => x.id === pId); if (p) { p.notes[idx] = val; saveLocally(false); } }
-
-    function handleNoteKey(e, pId, idx) {
-      const p = state.people.find(x => x.id === pId);
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (p.notes[idx].trim() === '') {
-          if (p.notes.length > 1) { p.notes.splice(idx, 1); saveLocally(); render(); setTimeout(() => document.getElementById(`n-${pId}-${idx-1}`)?.focus(), 0); }
-          else e.target.blur();
-        } else {
-          p.notes.splice(idx + 1, 0, ''); saveLocally(); render(); setTimeout(() => document.getElementById(`n-${pId}-${idx+1}`)?.focus(), 0);
-        }
-      } else if (e.key === 'Backspace' && e.target.value === '' && p.notes.length > 1) {
-        e.preventDefault();
-        p.notes.splice(idx, 1); saveLocally(); render(); setTimeout(() => { const prev = document.getElementById(`n-${pId}-${idx-1}`); if (prev) { prev.focus(); prev.selectionStart = prev.value.length; } }, 0);
-      }
-    }
-    
-    // === БЕЗОПАСНЫЙ DRAG AND DROP ===
-    let draggedEl = null;
-
-    function handleDragStart(e, type) {
-      draggedEl = e.target.closest(type === 'task' ? '.task' : '.person');
-      e.dataTransfer.effectAllowed = 'move';
-      setTimeout(() => { if (draggedEl) draggedEl.classList.add('dragging'); }, 0);
-    }
-    
-    function handleDragEnd(e) {
-      if (draggedEl) draggedEl.classList.remove('dragging');
-      draggedEl = null;
-    }
-
-    function onDragOverList(e) {
-      e.preventDefault();
-      const container = e.currentTarget;
-      const afterElement = getDragAfterElement(container, e.clientY);
-      const dragging = document.querySelector('.dragging');
-      if (dragging) {
-        if (afterElement == null) container.appendChild(dragging);
-        else container.insertBefore(dragging, afterElement);
-      }
-    }
-
-    function getDragAfterElement(container, y) {
-      const draggables = [...container.querySelectorAll('.task:not(.dragging), .person:not(.dragging), .group-title')];
-      return draggables.reduce((closest, child) => {
-        const box = child.getBoundingClientRect();
-        const offset = y - box.top - box.height / 2;
-        return (offset < 0 && offset > closest.offset) ? { offset, element: child } : closest;
-      }, { offset: Number.NEGATIVE_INFINITY }).element;
-    }
-
-    function onDropTask(e) {
-      e.preventDefault();
-      if (draggedEl) draggedEl.classList.remove('dragging');
-      draggedEl = null;
-      
-      const activeTabTasks = [];
-      let currentGroup = 'today';
-      
-      const children = Array.from(document.getElementById('taskList').children);
-      children.forEach(child => {
-        if (child.classList.contains('group-title')) {
-          currentGroup = child.getAttribute('data-group');
-        } else if (child.classList.contains('task')) {
-          const task = state.tasks.find(t => t.id === child.dataset.id);
-          if (task) { 
-            task.date = currentGroup;
-            activeTabTasks.push(task); 
-          }
-        }
-      });
-      
-      const otherTasks = state.tasks.filter(t => t.tab !== currentTab || t.status !== 'active');
-      state.tasks = [...activeTabTasks, ...otherTasks];
-      saveLocally(); render();
-    }
-
-    function onDropPerson(e) {
-      e.preventDefault();
-      if (draggedEl) draggedEl.classList.remove('dragging');
-      draggedEl = null;
-      
-      const newOrder = [];
-      let isPinnedGrp = true;
-
-      Array.from(document.getElementById('peopleList').children).forEach(child => {
-        if (child.classList.contains('group-title')) isPinnedGrp = child.dataset.group === 'pinned';
-        else if (child.classList.contains('person')) {
-          const p = state.people.find(x
