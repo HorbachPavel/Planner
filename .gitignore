@@ -1,0 +1,11 @@
+node_modules/
+.next/
+coverage/
+.env
+.env.local
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+data/
+*.log
+.DS_Store
