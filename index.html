@@ -3,170 +3,377 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Планировщик</title>
-  <link rel="manifest" href="manifest.json">
-  <!-- Подключение официальной библиотеки авторизации Google -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <title>FocusFlow</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 500px; margin: 20px auto; padding: 0 15px; }
-    .auth-block { margin-bottom: 15px; padding: 12px; background: #f0f4f8; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
-    .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
-    input { flex: 1; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; }
-    button { padding: 10px 15px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
-    button:disabled { background: #6c757d; cursor: default; }
-    ul { list-style: none; padding: 0; }
-    li { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
-    .status { font-size: 13px; color: #555; }
+    :root {
+      --bg: #f9f8f6; --surface: #ffffff; --text: #333333;
+      --accent: #437060; --accent-hover: #365a4d;
+      --border: #e0e0e0; --overdue: #b74b4b; --now-bg: #fdf5e6;
+      --now-text: #8c5a2b; --radius: 8px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 20px; max-width: 900px; margin: 0 auto; }
+    
+    /* Tabs */
+    .tabs { display: flex; background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; margin-bottom: 20px; }
+    .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; font-weight: 600; border: none; background: transparent; font-size: 14px; }
+    .tab.active { background: var(--accent); color: white; border-radius: var(--radius); }
+    
+    /* Input Area */
+    .input-area { background: var(--surface); padding: 15px; border-radius: var(--radius); border: 1px solid var(--border); display: flex; gap: 15px; align-items: center; margin-bottom: 15px; }
+    .input-area input[type="text"] { flex: 1; border: none; outline: none; font-size: 16px; background: transparent; }
+    .input-area select { border: none; outline: none; background: transparent; font-size: 14px; cursor: pointer; color: var(--text); }
+    .btn-enter { background: #eadecd; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; color: #5a4022; }
+    
+    /* Now Bar */
+    .now-bar { background: var(--now-bg); border: 1px solid #f0e6d2; padding: 12px 20px; border-radius: var(--radius); display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .now-label { font-size: 12px; font-weight: bold; color: var(--now-text); text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 8px; }
+    .now-title { font-weight: 600; font-size: 15px; margin-left: 10px; color: var(--text); }
+    .btn-done { background: #e3efe9; border: 1px solid #c2dcd0; color: var(--accent); padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; }
+
+    /* List Header */
+    .list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .list-header h3 { font-size: 16px; display: flex; align-items: center; gap: 8px; }
+    .task-count { color: #888; font-weight: normal; font-size: 14px; }
+    .view-toggles { display: flex; background: #e9ecef; border-radius: 20px; overflow: hidden; }
+    .view-toggle { padding: 6px 16px; border: none; background: transparent; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .view-toggle.active { background: var(--accent); color: white; border-radius: 20px; }
+
+    /* Task Groups */
+    .group-title { font-size: 11px; font-weight: bold; text-transform: uppercase; margin: 20px 0 10px; padding-left: 10px; border-left: 2px solid #ccc; letter-spacing: 0.5px; }
+    .group-title.overdue { color: var(--overdue); border-left-color: var(--overdue); }
+    .group-title.today { color: #d98f2b; border-left-color: #d98f2b; }
+    .group-title.this-week { color: var(--accent); border-left-color: var(--accent); }
+    
+    /* Tasks */
+    .task { background: var(--surface); padding: 12px 15px; border-radius: var(--radius); border: 1px solid var(--border); display: flex; align-items: center; gap: 15px; margin-bottom: 8px; transition: 0.2s; }
+    .task-handle { cursor: grab; color: #bbb; user-select: none; }
+    .task-title { flex: 1; border: none; outline: none; font-size: 15px; background: transparent; }
+    .task-checkbox { width: 18px; height: 18px; cursor: pointer; border-radius: 50%; border: 1px solid #bbb; appearance: none; display: flex; align-items: center; justify-content: center; }
+    .task-checkbox:checked { background: var(--accent); border-color: var(--accent); }
+    
+    /* Toast Error */
+    #toast { position: fixed; bottom: -50px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 12px 24px; border-radius: 20px; transition: 0.3s; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; }
+    #toast.show { bottom: 20px; }
+    
+    /* Hide by default */
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <h2>Мой Планировщик</h2>
 
-  <div class="auth-block">
-    <button id="authBtn" onclick="handleAuth()">Войти в Google</button>
-    <span id="syncStatus" class="status">Офлайн-режим</span>
-  </div>
-  
-  <div class="input-group">
-    <input type="text" id="taskInput" placeholder="Новая задача...">
-    <button onclick="addTask()">+</button>
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('work')">Work</button>
+    <button class="tab" onclick="switchTab('personal')">Personal</button>
+    <button class="tab" onclick="switchTab('todiscuss')">To discuss</button>
   </div>
 
-  <ul id="taskList"></ul>
+  <!-- Main Content Area -->
+  <div id="tasks-container">
+    <!-- Input -->
+    <div class="input-area">
+      <span style="color: #888;">+</span>
+      <input type="text" id="taskInput" placeholder="Capture a task and clear your head..." onkeydown="handleInputKey(event)">
+      <select id="taskDate">
+        <option value="overdue">Overdue</option>
+        <option value="today" selected>Today</option>
+        <option value="tomorrow">Tomorrow</option>
+        <option value="this_week">This week</option>
+        <option value="next_week">Next week</option>
+        <option value="later">Later</option>
+      </select>
+      <button class="btn-enter" onclick="addTask()">Enter</button>
+    </div>
+
+    <!-- Now Bar -->
+    <div class="now-bar" id="nowBar">
+      <div class="now-label">✨ NOW <span class="now-title" id="nowTitle"></span></div>
+      <button class="btn-done" onclick="completeNowTask()">✓ Done</button>
+    </div>
+
+    <!-- Header & Toggles -->
+    <div class="list-header">
+      <h3>Tasks <span class="task-count" id="taskCount">0</span></h3>
+      <div class="view-toggles">
+        <button class="view-toggle active" id="btnActive" onclick="switchView('active')">Active</button>
+        <button class="view-toggle" id="btnDone" onclick="switchView('done')">Done</button>
+      </div>
+    </div>
+
+    <!-- Task List -->
+    <div id="taskList"></div>
+  </div>
+
+  <!-- To Discuss Placeholder -->
+  <div id="todiscuss-container" class="hidden">
+    <p style="text-align:center; color:#888; margin-top: 50px;">Вкладка людей и тем (Добавим на следующем шаге)</p>
+  </div>
+
+  <!-- Error Toast -->
+  <div id="toast" onclick="closeToast()"></div>
 
   <script>
-    // ⚠️ ВСТАВЬТЕ СЮДА ВАШ CLIENT ID ИЗ GOOGLE CLOUD CONSOLE
-    const CLIENT_ID = '49484425550-6lbhol7vhovnrhosuh3qlahfv9eavgee.apps.googleusercontent.com';
-    const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+    // === STATE ===
+    let currentTab = 'work'; // 'work', 'personal', 'todiscuss'
+    let currentView = 'active'; // 'active', 'done'
+    let tasks = JSON.parse(localStorage.getItem('focusflow_tasks')) || [];
+    
+    const GROUPS = ['overdue', 'today', 'tomorrow', 'this_week', 'next_week', 'later'];
+    const GROUP_LABELS = { overdue: 'Overdue', today: 'Today', tomorrow: 'Tomorrow', this_week: 'This week', next_week: 'Next week', later: 'Later' };
 
-    let tokenClient;
-    let accessToken = null;
-    let driveFileId = null;
-
-    const input = document.getElementById('taskInput');
-    const list = document.getElementById('taskList');
-    const syncStatus = document.getElementById('syncStatus');
-    const authBtn = document.getElementById('authBtn');
-
+    // === INITIALIZATION ===
     window.onload = () => {
-      renderTasks();
-      if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
-
-      // Инициализация Google Identity Services
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES,
-        callback: async (response) => {
-          if (response.error) return;
-          accessToken = response.access_token;
-          authBtn.innerText = 'Google подключен';
-          authBtn.disabled = true;
-          syncStatus.innerText = 'Загрузка с Диска...';
-          await initDriveSync();
-        },
-      });
+      checkDateShift();
+      render();
     };
 
-    function handleAuth() {
-      tokenClient.requestAccessToken();
-    }
-
-    function getTasks() {
-      return JSON.parse(localStorage.getItem('test_tasks') || '[]');
-    }
-
-    function saveTasksLocally(tasks) {
-      localStorage.setItem('test_tasks', JSON.stringify(tasks));
-      renderTasks();
-      if (accessToken && driveFileId) {
-        syncToDrive();
+    // === DATE SHIFTING LOGIC ===
+    function checkDateShift() {
+      const lastDate = localStorage.getItem('focusflow_last_date');
+      const today = new Date().toDateString();
+      
+      if (!lastDate) {
+        localStorage.setItem('focusflow_last_date', today);
+        return;
+      }
+      
+      if (lastDate !== today) {
+        const msPerDay = 1000 * 60 * 60 * 24;
+        const daysDiff = Math.floor((new Date(today) - new Date(lastDate)) / msPerDay);
+        
+        let shifted = false;
+        tasks.forEach(t => {
+          if (t.status === 'active') {
+            if (t.date === 'today') {
+              t.date = 'overdue';
+              shifted = true;
+            } else if (t.date === 'tomorrow') {
+              t.date = daysDiff === 1 ? 'today' : 'overdue';
+              shifted = true;
+            }
+          }
+        });
+        
+        if (shifted) saveTasksLocally();
+        localStorage.setItem('focusflow_last_date', today);
       }
     }
 
-    function renderTasks() {
-      const tasks = getTasks();
-      list.innerHTML = tasks.map((t, index) => 
-        `<li>${t} <button onclick="deleteTask(${index})" style="background:none;color:red;padding:0;">✕</button></li>`
-      ).join('');
+    // === CORE FUNCTIONS ===
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+      event.target.classList.add('active');
+      
+      if (tab === 'todiscuss') {
+        document.getElementById('tasks-container').classList.add('hidden');
+        document.getElementById('todiscuss-container').classList.remove('hidden');
+      } else {
+        document.getElementById('tasks-container').classList.remove('hidden');
+        document.getElementById('todiscuss-container').classList.add('hidden');
+        render();
+      }
+    }
+
+    function switchView(view) {
+      currentView = view;
+      document.getElementById('btnActive').classList.toggle('active', view === 'active');
+      document.getElementById('btnDone').classList.toggle('active', view === 'done');
+      render();
+    }
+
+    function showError(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.classList.add('show');
+      setTimeout(() => closeToast(), 3000);
+    }
+    
+    function closeToast() {
+      document.getElementById('toast').classList.remove('show');
+    }
+
+    // === TASK MANAGEMENT ===
+    function handleInputKey(e) {
+      const val = e.key;
+      // Hotkeys 1-6 for dates
+      if (['1','2','3','4','5','6'].includes(val) && (e.ctrlKey || e.altKey || document.activeElement === document.getElementById('taskInput') && document.getElementById('taskInput').value === '')) {
+         e.preventDefault();
+         document.getElementById('taskDate').selectedIndex = parseInt(val) - 1;
+         return;
+      }
+      if (e.key === 'Enter') addTask();
     }
 
     function addTask() {
-      if (!input.value.trim()) return;
-      const tasks = getTasks();
-      tasks.push(input.value.trim());
+      const input = document.getElementById('taskInput');
+      const dateSel = document.getElementById('taskDate');
+      const title = input.value.trim();
+      
+      if (!title) return;
+
+      // Unique title validation in ACTIVE current tab
+      const isDuplicate = tasks.some(t => t.tab === currentTab && t.status === 'active' && t.title.toLowerCase() === title.toLowerCase());
+      if (isDuplicate) {
+        showError('Задача с таким именем уже существует в открытых.');
+        return;
+      }
+
+      const newTask = {
+        id: Date.now().toString(),
+        tab: currentTab,
+        title: title,
+        date: dateSel.value,
+        status: 'active',
+        flag: null,
+        completedAt: null
+      };
+
+      // Add to beginning
+      tasks.unshift(newTask);
       input.value = '';
-      saveTasksLocally(tasks);
+      dateSel.value = 'today';
+      
+      saveTasksLocally();
+      render();
     }
 
-    function deleteTask(index) {
-      const tasks = getTasks();
-      tasks.splice(index, 1);
-      saveTasksLocally(tasks);
-    }
-
-    // --- Логика работы с Google Drive API ---
-
-    async function initDriveSync() {
-      try {
-        // Поиск файла planner_data.json на Диске
-        const res = await fetch("https://www.googleapis.com/drive/v3/files?q=name='planner_data.json' and trashed=false", {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        });
-        const data = await res.json();
-
-        if (data.files && data.files.length > 0) {
-          driveFileId = data.files[0].id;
-          await loadFromDrive();
+    function toggleTaskStatus(id) {
+      const task = tasks.find(t => t.id === id);
+      if (task) {
+        if (task.status === 'active') {
+          task.status = 'done';
+          task.completedAt = Date.now();
         } else {
-          await createDriveFile();
+          // Verify duplicate before reactivating
+          const isDuplicate = tasks.some(t => t.id !== id && t.tab === task.tab && t.status === 'active' && t.title.toLowerCase() === task.title.toLowerCase());
+          if (isDuplicate) {
+            showError('Нельзя вернуть: задача с таким именем уже активна.');
+            return;
+          }
+          task.status = 'active';
+          task.completedAt = null;
         }
-        syncStatus.innerText = 'Синхронизировано';
-      } catch (err) {
-        syncStatus.innerText = 'Ошибка синхронизации';
-        console.error(err);
+        saveTasksLocally();
+        render();
       }
     }
 
-    async function loadFromDrive() {
-      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
-      const remoteTasks = await res.json();
-      localStorage.setItem('test_tasks', JSON.stringify(remoteTasks));
-      renderTasks();
+    function updateTaskDate(id, newDate) {
+      const task = tasks.find(t => t.id === id);
+      if (task) {
+        task.date = newDate;
+        // Move to top of new group (by moving to front of array)
+        tasks = tasks.filter(t => t.id !== id);
+        tasks.unshift(task);
+        saveTasksLocally();
+        render();
+      }
     }
 
-    async function createDriveFile() {
-      const metadata = { name: 'planner_data.json', mimeType: 'application/json' };
-      const tasks = getTasks();
-
-      const form = new FormData();
-      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-      form.append('file', new Blob([JSON.stringify(tasks)], { type: 'application/json' }));
-
-      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form
-      });
-      const file = await res.json();
-      driveFileId = file.id;
+    function updateTaskTitle(id, newTitle) {
+      const task = tasks.find(t => t.id === id);
+      if (task && newTitle.trim()) {
+        task.title = newTitle.trim();
+        saveTasksLocally();
+      }
     }
 
-    async function syncToDrive() {
-      if (!driveFileId || !accessToken) return;
-      syncStatus.innerText = 'Сохранение...';
-      const tasks = getTasks();
+    function completeNowTask() {
+      const activeTabTasks = tasks.filter(t => t.tab === currentTab && t.status === 'active');
+      if (activeTabTasks.length > 0) toggleTaskStatus(activeTabTasks[0].id);
+    }
+
+    function saveTasksLocally() {
+      localStorage.setItem('focusflow_tasks', JSON.stringify(tasks));
+      // Здесь позже будет вызов syncToDrive()
+    }
+
+    // === RENDER ===
+    function render() {
+      const list = document.getElementById('taskList');
+      const nowBar = document.getElementById('nowBar');
+      const nowTitle = document.getElementById('nowTitle');
+      list.innerHTML = '';
+
+      let tabTasks = tasks.filter(t => t.tab === currentTab);
       
-      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(tasks)
-      });
-      syncStatus.innerText = 'Синхронизировано';
+      if (currentView === 'active') {
+        let activeTasks = tabTasks.filter(t => t.status === 'active');
+        document.getElementById('taskCount').innerText = activeTasks.length;
+
+        // Render Now Bar
+        if (activeTasks.length > 0) {
+          nowBar.classList.remove('hidden');
+          nowTitle.innerText = activeTasks[0].title;
+        } else {
+          nowBar.classList.add('hidden');
+        }
+
+        // Render Groups
+        GROUPS.forEach(groupKey => {
+          const groupTasks = activeTasks.filter(t => t.date === groupKey);
+          if (groupTasks.length > 0) {
+            const groupHeader = document.createElement('div');
+            groupHeader.className = `group-title ${groupKey.replace('_', '-')}`;
+            groupHeader.innerText = GROUP_LABELS[groupKey];
+            list.appendChild(groupHeader);
+
+            groupTasks.forEach(task => list.appendChild(createTaskElement(task)));
+          }
+        });
+
+      } else {
+        // Render Done view
+        let doneTasks = tabTasks.filter(t => t.status === 'done').sort((a, b) => b.completedAt - a.completedAt);
+        document.getElementById('taskCount').innerText = doneTasks.length;
+        nowBar.classList.add('hidden');
+        
+        if (doneTasks.length === 0) {
+          list.innerHTML = '<p style="color:#888; text-align:center; padding: 20px;">Нет выполненных задач</p>';
+        }
+        doneTasks.forEach(task => list.appendChild(createTaskElement(task)));
+      }
+    }
+
+    function createTaskElement(task) {
+      const div = document.createElement('div');
+      div.className = 'task';
+      
+      const isDone = task.status === 'done';
+      
+      div.innerHTML = `
+        <div class="task-handle">⋮⋮</div>
+        <input type="checkbox" class="task-checkbox" ${isDone ? 'checked' : ''} onclick="toggleTaskStatus('${task.id}')">
+        <input type="text" class="task-title" value="${task.title}" ${isDone ? 'readonly' : ''} onblur="updateTaskTitle('${task.id}', this.value)" style="text-decoration: ${isDone ? 'line-through' : 'none'}; color: ${isDone ? '#888' : 'inherit'};">
+      `;
+
+      if (!isDone) {
+        const select = document.createElement('select');
+        select.style.border = "1px solid #eee";
+        select.style.padding = "4px";
+        select.style.borderRadius = "4px";
+        select.style.outline = "none";
+        select.onchange = (e) => updateTaskDate(task.id, e.target.value);
+        
+        GROUPS.forEach(g => {
+          const opt = document.createElement('option');
+          opt.value = g;
+          opt.innerText = GROUP_LABELS[g];
+          if (g === task.date) opt.selected = true;
+          select.appendChild(opt);
+        });
+        div.appendChild(select);
+      } else {
+         const dateSpan = document.createElement('span');
+         dateSpan.style.color = '#bbb';
+         dateSpan.style.fontSize = '12px';
+         dateSpan.innerText = new Date(task.completedAt).toLocaleDateString();
+         div.appendChild(dateSpan);
+      }
+
+      return div;
     }
   </script>
 </body>
