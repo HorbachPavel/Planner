@@ -18,7 +18,8 @@
     
     .auth-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; font-size: 13px; color: #666; background: #eee; padding: 10px 15px; border-radius: var(--radius); }
     .btn-auth { background: var(--accent); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
-    
+    .btn-auth:disabled { background: #999; cursor: default; }
+
     .tabs { display: flex; background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; margin-bottom: 20px; }
     .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; font-weight: 600; border: none; background: transparent; font-size: 14px; }
     .tab.active { background: var(--accent); color: white; border-radius: var(--radius); }
@@ -67,11 +68,16 @@
     #toast.show { bottom: 20px; }
     .hidden { display: none !important; }
     
-    #errorBanner { display: none; background: #b74b4b; color: white; padding: 12px; text-align: center; font-weight: bold; border-radius: 8px; margin-bottom: 15px; }
+    #errorBanner { display: none; background: #b74b4b; color: white; padding: 20px; text-align: center; border-radius: 8px; margin-bottom: 15px; }
+    .btn-reset { margin-top: 15px; padding: 10px 20px; background: white; color: #b74b4b; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
   </style>
 </head>
 <body>
-  <div id="errorBanner"></div>
+  <div id="errorBanner">
+    <h3>Сбой локальных данных</h3>
+    <p>Кажется, сохраненные данные повреждены.</p>
+    <button class="btn-reset" onclick="factoryReset()">Сбросить память и перезагрузить</button>
+  </div>
 
   <div class="auth-bar">
     <div style="display:flex; gap: 10px; align-items:center;">
@@ -136,18 +142,22 @@
   <div id="toast"></div>
 
   <script>
-    // --- 1. АБСОЛЮТНАЯ ЗАЩИТА ПАМЯТИ ---
     const LS = {
       get: (k) => { try { return localStorage.getItem(k); } catch(e){ return null; } },
       set: (k, v) => { try { localStorage.setItem(k, v); } catch(e){ console.warn("LS blocked"); } },
       clear: () => { try { localStorage.clear(); } catch(e){} }
     };
 
+    function factoryReset() {
+      LS.clear();
+      window.location.reload();
+    }
+
     window.onerror = function(msg, url, line) {
       const banner = document.getElementById('errorBanner');
       if (banner) {
         banner.style.display = 'block';
-        banner.innerText = `System Error: ${msg} (Line: ${line})`;
+        banner.querySelector('p').innerText += `\nError: ${msg}`;
       }
     };
 
@@ -170,9 +180,7 @@
           state.updatedAt = parsed.updatedAt || Date.now();
         }
       }
-    } catch (e) {
-      console.error("Corrupted state", e);
-    }
+    } catch (e) { console.error("Corrupted state", e); }
 
     const GROUPS = ['overdue', 'today', 'tomorrow', 'this_week', 'next_week', 'later'];
     const GROUP_LABELS = { overdue: 'Overdue', today: 'Today', tomorrow: 'Tomorrow', this_week: 'This week', next_week: 'Next week', later: 'Later' };
@@ -195,6 +203,17 @@
       }, 100);
     };
 
+    // ФУНКЦИЯ СБРОСА UI ПРИ ПРОТУХАНИИ ТОКЕНА
+    function resetAuthUI() {
+      LS.set('gdrive_token', '');
+      LS.set('gdrive_token_expires', '0');
+      accessToken = null;
+      const btn = document.getElementById('authBtn');
+      btn.innerText = 'Обновить сессию';
+      btn.disabled = false;
+      document.getElementById('syncStatus').innerText = 'Сессия истекла (нужен клик)';
+    }
+
     function initGoogleAuth() {
       try {
         tokenClient = google.accounts.oauth2.initTokenClient({
@@ -203,12 +222,29 @@
           callback: async (response) => {
             if (response.error) return;
             accessToken = response.access_token;
+            
+            // КЭШИРОВАНИЕ ТОКЕНА НА 55 МИНУТ (3300000 мс)
+            LS.set('gdrive_token', accessToken);
+            LS.set('gdrive_token_expires', (Date.now() + 3300000).toString());
+
             document.getElementById('authBtn').innerText = 'Синхронизировано';
             document.getElementById('authBtn').disabled = true;
             document.getElementById('syncStatus').innerText = 'Проверка облака...';
             await initDriveSync();
           },
         });
+
+        // АВТОМАТИЧЕСКИЙ ВХОД (если токен в кэше еще жив)
+        const savedToken = LS.get('gdrive_token');
+        const tokenExpires = LS.get('gdrive_token_expires');
+        if (savedToken && tokenExpires && Date.now() < parseInt(tokenExpires)) {
+          accessToken = savedToken;
+          document.getElementById('authBtn').innerText = 'Синхронизировано';
+          document.getElementById('authBtn').disabled = true;
+          document.getElementById('syncStatus').innerText = 'Восстановление сессии...';
+          initDriveSync();
+        }
+
       } catch (e) { console.error(e); }
     }
 
@@ -222,13 +258,18 @@
         const res = await fetch("https://www.googleapis.com/drive/v3/files?q=name='focusflow_data.json' and trashed=false", {
           headers: { Authorization: `Bearer ${accessToken}` }
         });
+        
+        // Если Гугл отклонил токен
+        if (res.status === 401) throw new Error('401');
+        
         const data = await res.json();
         
         if (data.files && data.files.length > 0) {
           driveFileId = data.files[0].id;
           const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
-          const remoteState = await fileRes.json();
+          if (fileRes.status === 401) throw new Error('401');
           
+          const remoteState = await fileRes.json();
           const localTime = state.updatedAt || 0;
           const remoteTime = remoteState.updatedAt || 0;
           
@@ -244,10 +285,11 @@
         } else {
           await syncToDrive(true);
         }
-        document.getElementById('syncStatus').innerText = 'Синхронизация активна';
+        document.getElementById('syncStatus').innerText = 'Авто-синхронизация активна';
         createDailyBackup();
       } catch (err) {
-        document.getElementById('syncStatus').innerText = 'Ошибка сети';
+        if (err.message === '401') resetAuthUI();
+        else document.getElementById('syncStatus').innerText = 'Ошибка сети';
       }
     }
 
@@ -258,20 +300,27 @@
       
       try {
         const fileContent = JSON.stringify(state);
+        let res;
+        
         if (isNew || !driveFileId) {
           const form = new FormData();
           form.append('metadata', new Blob([JSON.stringify({ name: 'focusflow_data.json', mimeType: 'application/json' })], { type: 'application/json' }));
           form.append('file', new Blob([fileContent], { type: 'application/json' }));
-          const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form });
+          res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form });
+          if (res.status === 401) throw new Error('401');
           const file = await res.json();
           driveFileId = file.id;
         } else {
-          await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+          res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
             method: 'PATCH', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: fileContent
           });
+          if (res.status === 401) throw new Error('401');
         }
         document.getElementById('syncStatus').innerText = 'Сохранено в GDrive';
-      } catch(e) { document.getElementById('syncStatus').innerText = 'Ошибка сохранения'; }
+      } catch(e) { 
+        if (e.message === '401') resetAuthUI();
+        else document.getElementById('syncStatus').innerText = 'Ошибка сохранения'; 
+      }
     }
 
     async function createDailyBackup() {
