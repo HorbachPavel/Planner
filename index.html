@@ -4,8 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FocusFlow</title>
-  <!-- Иконка приложения (Логотип) для вкладок и ярлыков -->
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%23437060%22/><text x=%2250%22 y=%2265%22 font-size=%2250%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22sans-serif%22 font-weight=%22bold%22>F</text></svg>">
+  <!-- Безопасная, полностью закодированная иконка приложения -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23437060'/%3E%3Ctext x='50' y='65' font-size='50' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3EF%3C/text%3E%3C/svg%3E">
+  <!-- Скрипт Google (будем ждать его загрузки безопасно) -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     :root {
@@ -142,7 +143,320 @@
     let currentView = 'active'; 
     let notesExpanded = true;
     
-    // Инициализация стейта с меткой времени (для защиты от затирания данных)
     let state = JSON.parse(localStorage.getItem('focusflow_data')) || { tasks: [], people: [], updatedAt: Date.now() };
 
-    const GROUPS = ['overdue', 'today', 'tomorrow', '
+    const GROUPS = ['overdue', 'today', 'tomorrow', 'this_week', 'next_week', 'later'];
+    const GROUP_LABELS = { overdue: 'Overdue', today: 'Today', tomorrow: 'Tomorrow', this_week: 'This week', next_week: 'Next week', later: 'Later' };
+    const PALETTE = ['#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2'];
+
+    window.onload = () => {
+      checkDateShift();
+      render();
+      
+      // Надежное ожидание загрузки скрипта Google
+      const checkGSI = setInterval(() => {
+        if (typeof google !== 'undefined' && google.accounts) {
+          clearInterval(checkGSI);
+          initGoogleAuth();
+        }
+      }, 100);
+    };
+
+    function initGoogleAuth() {
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: async (response) => {
+          if (response.error) return;
+          accessToken = response.access_token;
+          document.getElementById('authBtn').innerText = 'Синхронизировано';
+          document.getElementById('authBtn').disabled = true;
+          document.getElementById('syncStatus').innerText = 'Проверка облака...';
+          await initDriveSync();
+        },
+      });
+    }
+
+    function handleAuth() { if (tokenClient) tokenClient.requestAccessToken(); }
+
+    async function initDriveSync() {
+      try {
+        const res = await fetch("https://www.googleapis.com/drive/v3/files?q=name='focusflow_data.json' and trashed=false", {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const data = await res.json();
+        
+        if (data.files && data.files.length > 0) {
+          driveFileId = data.files[0].id;
+          const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
+          const remoteState = await fileRes.json();
+          
+          const localTime = state.updatedAt || 0;
+          const remoteTime = remoteState.updatedAt || 0;
+          
+          if (localTime >= remoteTime && state.tasks.length >= (remoteState.tasks?.length || 0)) {
+            await syncToDrive(false);
+          } else {
+            state = remoteState;
+            saveLocally(false);
+          }
+          render();
+        } else {
+          await syncToDrive(true);
+        }
+        document.getElementById('syncStatus').innerText = 'Авто-синхронизация включена';
+        createDailyBackup();
+      } catch (err) {
+        document.getElementById('syncStatus').innerText = 'Ошибка сети';
+      }
+    }
+
+    async function syncToDrive(isNew = false) {
+      if (!accessToken) return;
+      document.getElementById('syncStatus').innerText = 'Сохранение...';
+      state.updatedAt = Date.now();
+      
+      const fileContent = JSON.stringify(state);
+      if (isNew || !driveFileId) {
+        const form = new FormData();
+        form.append('metadata', new Blob([JSON.stringify({ name: 'focusflow_data.json', mimeType: 'application/json' })], { type: 'application/json' }));
+        form.append('file', new Blob([fileContent], { type: 'application/json' }));
+        const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form });
+        const file = await res.json();
+        driveFileId = file.id;
+      } else {
+        await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+          method: 'PATCH', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: fileContent
+        });
+      }
+      document.getElementById('syncStatus').innerText = 'Сохранено в GDrive';
+    }
+
+    async function createDailyBackup() {
+      if (!accessToken) return;
+      const today = new Date().toISOString().split('T')[0];
+      if (localStorage.getItem('focusflow_last_backup') === today) return;
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify({ name: `focusflow_backup_${today}.json`, mimeType: 'application/json' })], { type: 'application/json' }));
+      form.append('file', new Blob([JSON.stringify(state)], { type: 'application/json' }));
+      try {
+        await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form });
+        localStorage.setItem('focusflow_last_backup', today);
+      } catch(e) {}
+    }
+
+    function saveLocally(sync = true) {
+      state.updatedAt = Date.now();
+      localStorage.setItem('focusflow_data', JSON.stringify(state));
+      if (sync) syncToDrive();
+    }
+
+    function checkDateShift() {
+      const today = new Date().toDateString();
+      const lastDate = localStorage.getItem('focusflow_last_date');
+      if (!lastDate) { localStorage.setItem('focusflow_last_date', today); return; }
+      if (lastDate !== today) {
+        const daysDiff = Math.floor((new Date(today) - new Date(lastDate)) / 86400000);
+        let shifted = false;
+        state.tasks.forEach(t => {
+          if (t.status === 'active') {
+            if (t.date === 'today') { t.date = 'overdue'; shifted = true; }
+            else if (t.date === 'tomorrow') { t.date = daysDiff === 1 ? 'today' : 'overdue'; shifted = true; }
+          }
+        });
+        if (shifted) saveLocally();
+        localStorage.setItem('focusflow_last_date', today);
+      }
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById('tasks-container').classList.toggle('hidden', tab === 'todiscuss');
+      document.getElementById('todiscuss-container').classList.toggle('hidden', tab !== 'todiscuss');
+      render();
+    }
+    
+    function switchView(view) {
+      currentView = view;
+      document.getElementById('btnActive').classList.toggle('active', view === 'active');
+      document.getElementById('btnDone').classList.toggle('active', view === 'done');
+      render();
+    }
+
+    function showError(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg; toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    function handleInputKey(e) {
+      if (['1','2','3','4','5','6'].includes(e.key) && (e.ctrlKey || document.getElementById('taskInput').value === '')) {
+         e.preventDefault();
+         document.getElementById('taskDate').selectedIndex = parseInt(e.key) - 1;
+         return;
+      }
+      if (e.key === 'Enter') addTask();
+    }
+
+    function addTask() {
+      const title = document.getElementById('taskInput').value.trim();
+      if (!title) return;
+      if (state.tasks.some(t => t.tab === currentTab && t.status === 'active' && t.title.toLowerCase() === title.toLowerCase())) {
+        return showError('Задача с таким именем уже открыта.');
+      }
+      const selectedDate = document.getElementById('taskDate').value;
+      state.tasks.unshift({ id: Date.now().toString(), tab: currentTab, title, date: selectedDate, status: 'active', flag: null, completedAt: null });
+      document.getElementById('taskInput').value = '';
+      document.getElementById('taskDate').value = 'today';
+      saveLocally(); render();
+    }
+
+    function toggleTaskStatus(id) {
+      const task = state.tasks.find(t => t.id === id);
+      if (task) {
+        if (task.status === 'active') { task.status = 'done'; task.completedAt = Date.now(); } 
+        else {
+          if (state.tasks.some(t => t.id !== id && t.tab === task.tab && t.status === 'active' && t.title.toLowerCase() === task.title.toLowerCase())) {
+            return showError('Нельзя вернуть: задача уже активна.');
+          }
+          task.status = 'active'; task.completedAt = null;
+        }
+        saveLocally(); render();
+      }
+    }
+
+    function updateTaskDate(id, newDate) {
+      const task = state.tasks.find(t => t.id === id);
+      if (task) {
+        task.date = newDate;
+        state.tasks = state.tasks.filter(t => t.id !== id);
+        state.tasks.unshift(task);
+        saveLocally(); render();
+      }
+    }
+
+    function updateTaskTitle(id, val) {
+      const task = state.tasks.find(t => t.id === id);
+      if (task && val.trim()) { task.title = val.trim(); saveLocally(); }
+    }
+
+    function toggleFlag(id) {
+      const task = state.tasks.find(t => t.id === id);
+      if (task.flag) task.flag = null;
+      else {
+        const used = state.tasks.filter(t => t.tab === currentTab && t.status === 'active' && t.flag).map(t => t.flag);
+        const avail = PALETTE.filter(c => !used.includes(c));
+        task.flag = avail.length > 0 ? avail[0] : PALETTE[0];
+      }
+      saveLocally(); render();
+    }
+
+    function completeNowTask() {
+      const active = state.tasks.filter(t => t.tab === currentTab && t.status === 'active');
+      const sorted = [...active].sort((a, b) => GROUPS.indexOf(a.date) - GROUPS.indexOf(b.date));
+      if (sorted.length > 0) toggleTaskStatus(sorted[0].id);
+    }
+
+    // === TO DISCUSS ===
+    function addPerson() {
+      const input = document.getElementById('personInput');
+      if (!input.value.trim()) return;
+      state.people.unshift({ id: 'p_'+Date.now(), name: input.value.trim(), isPinned: false, notes: [''] });
+      input.value = ''; saveLocally(); render();
+    }
+
+    function deletePerson(id) { state.people = state.people.filter(p => p.id !== id); saveLocally(); render(); }
+    function updatePersonName(id, val) { const p = state.people.find(x => x.id === id); if (p && val.trim()) { p.name = val.trim(); saveLocally(); } }
+    function toggleNotes() { notesExpanded = !notesExpanded; render(); }
+    function updateNote(pId, idx, val) { const p = state.people.find(x => x.id === pId); if (p) { p.notes[idx] = val; saveLocally(false); } }
+
+    function handleNoteKey(e, pId, idx) {
+      const p = state.people.find(x => x.id === pId);
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (p.notes[idx].trim() === '') {
+          if (p.notes.length > 1) { p.notes.splice(idx, 1); saveLocally(); render(); setTimeout(() => document.getElementById(`n-${pId}-${idx-1}`)?.focus(), 0); }
+          else e.target.blur();
+        } else {
+          p.notes.splice(idx + 1, 0, ''); saveLocally(); render(); setTimeout(() => document.getElementById(`n-${pId}-${idx+1}`)?.focus(), 0);
+        }
+      } else if (e.key === 'Backspace' && e.target.value === '' && p.notes.length > 1) {
+        e.preventDefault();
+        p.notes.splice(idx, 1); saveLocally(); render(); setTimeout(() => { const prev = document.getElementById(`n-${pId}-${idx-1}`); if (prev) { prev.focus(); prev.selectionStart = prev.value.length; } }, 0);
+      }
+    }
+    
+    // === БЕЗОПАСНЫЙ DRAG AND DROP ===
+    let draggedEl = null;
+
+    function handleDragStart(e, type) {
+      draggedEl = e.target.closest(type === 'task' ? '.task' : '.person');
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => { if (draggedEl) draggedEl.classList.add('dragging'); }, 0);
+    }
+    
+    function handleDragEnd(e) {
+      if (draggedEl) draggedEl.classList.remove('dragging');
+      draggedEl = null;
+    }
+
+    function onDragOverList(e) {
+      e.preventDefault();
+      const container = e.currentTarget;
+      const afterElement = getDragAfterElement(container, e.clientY);
+      const dragging = document.querySelector('.dragging');
+      if (dragging) {
+        if (afterElement == null) container.appendChild(dragging);
+        else container.insertBefore(dragging, afterElement);
+      }
+    }
+
+    function getDragAfterElement(container, y) {
+      const draggables = [...container.querySelectorAll('.task:not(.dragging), .person:not(.dragging), .group-title')];
+      return draggables.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        return (offset < 0 && offset > closest.offset) ? { offset, element: child } : closest;
+      }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    function onDropTask(e) {
+      e.preventDefault();
+      if (draggedEl) draggedEl.classList.remove('dragging');
+      draggedEl = null;
+      
+      const activeTabTasks = [];
+      let currentGroup = 'today';
+      
+      const children = Array.from(document.getElementById('taskList').children);
+      children.forEach(child => {
+        if (child.classList.contains('group-title')) {
+          currentGroup = child.getAttribute('data-group');
+        } else if (child.classList.contains('task')) {
+          const task = state.tasks.find(t => t.id === child.dataset.id);
+          if (task) { 
+            task.date = currentGroup;
+            activeTabTasks.push(task); 
+          }
+        }
+      });
+      
+      const otherTasks = state.tasks.filter(t => t.tab !== currentTab || t.status !== 'active');
+      state.tasks = [...activeTabTasks, ...otherTasks];
+      saveLocally(); render();
+    }
+
+    function onDropPerson(e) {
+      e.preventDefault();
+      if (draggedEl) draggedEl.classList.remove('dragging');
+      draggedEl = null;
+      
+      const newOrder = [];
+      let isPinnedGrp = true;
+
+      Array.from(document.getElementById('peopleList').children).forEach(child => {
+        if (child.classList.contains('group-title')) isPinnedGrp = child.dataset.group === 'pinned';
+        else if (child.classList.contains('person')) {
+          const p = state.people.find(x
