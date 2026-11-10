@@ -67,7 +67,6 @@
     #toast.show { bottom: 20px; }
     .hidden { display: none !important; }
     
-    /* Блок для отлова критических ошибок */
     #errorBanner { display: none; background: #b74b4b; color: white; padding: 12px; text-align: center; font-weight: bold; border-radius: 8px; margin-bottom: 15px; }
   </style>
 </head>
@@ -137,7 +136,13 @@
   <div id="toast"></div>
 
   <script>
-    // 1. ОТЛОВ КРИТИЧЕСКИХ ОШИБОК
+    // --- 1. АБСОЛЮТНАЯ ЗАЩИТА ПАМЯТИ ---
+    const LS = {
+      get: (k) => { try { return localStorage.getItem(k); } catch(e){ return null; } },
+      set: (k, v) => { try { localStorage.setItem(k, v); } catch(e){ console.warn("LS blocked"); } },
+      clear: () => { try { localStorage.clear(); } catch(e){} }
+    };
+
     window.onerror = function(msg, url, line) {
       const banner = document.getElementById('errorBanner');
       if (banner) {
@@ -154,20 +159,19 @@
     let currentView = 'active'; 
     let notesExpanded = true;
     
-    // 2. БЕЗОПАСНАЯ ИНИЦИАЛИЗАЦИЯ ДАННЫХ
     let state = { tasks: [], people: [], updatedAt: Date.now() };
     try {
-      const savedData = localStorage.getItem('focusflow_data');
+      const savedData = LS.get('focusflow_data');
       if (savedData) {
         const parsed = JSON.parse(savedData);
         if (parsed && typeof parsed === 'object') {
-          state.tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-          state.people = Array.isArray(parsed.people) ? parsed.people : [];
+          state.tasks = Array.isArray(parsed.tasks) ? parsed.tasks.filter(t => t && t.id && t.status) : [];
+          state.people = Array.isArray(parsed.people) ? parsed.people.filter(p => p && p.id) : [];
           state.updatedAt = parsed.updatedAt || Date.now();
         }
       }
     } catch (e) {
-      console.error("Corrupted local data", e);
+      console.error("Corrupted state", e);
     }
 
     const GROUPS = ['overdue', 'today', 'tomorrow', 'this_week', 'next_week', 'later'];
@@ -178,16 +182,15 @@
       checkDateShift();
       render();
       
-      // Защищенный таймер ожидания Google API
       let attempts = 0;
       const checkGSI = setInterval(() => {
         attempts++;
         if (typeof google !== 'undefined' && google.accounts) {
           clearInterval(checkGSI);
           initGoogleAuth();
-        } else if (attempts > 50) { // Стоп после 5 секунд
+        } else if (attempts > 50) { 
           clearInterval(checkGSI);
-          document.getElementById('syncStatus').innerText = 'API недоступно (Offline/AdBlock)';
+          document.getElementById('syncStatus').innerText = 'Google API заблокировано (AdBlock/Offline)';
         }
       }, 100);
     };
@@ -206,12 +209,12 @@
             await initDriveSync();
           },
         });
-      } catch (e) { console.error('GSI Init Error', e); }
+      } catch (e) { console.error(e); }
     }
 
     function handleAuth() { 
       if (tokenClient) tokenClient.requestAccessToken(); 
-      else showError('Google API еще не загрузилось');
+      else showError('Google скрипт еще не загрузился');
     }
 
     async function initDriveSync() {
@@ -232,8 +235,8 @@
           if (localTime >= remoteTime && state.tasks.length >= (remoteState.tasks?.length || 0)) {
             await syncToDrive(false);
           } else {
-            state.tasks = Array.isArray(remoteState.tasks) ? remoteState.tasks : [];
-            state.people = Array.isArray(remoteState.people) ? remoteState.people : [];
+            state.tasks = Array.isArray(remoteState.tasks) ? remoteState.tasks.filter(t=>t&&t.id) : [];
+            state.people = Array.isArray(remoteState.people) ? remoteState.people.filter(p=>p&&p.id) : [];
             state.updatedAt = remoteState.updatedAt || Date.now();
             saveLocally(false);
           }
@@ -268,33 +271,33 @@
           });
         }
         document.getElementById('syncStatus').innerText = 'Сохранено в GDrive';
-      } catch(e) { document.getElementById('syncStatus').innerText = 'Сбой сохранения'; }
+      } catch(e) { document.getElementById('syncStatus').innerText = 'Ошибка сохранения'; }
     }
 
     async function createDailyBackup() {
       if (!accessToken) return;
       const today = new Date().toISOString().split('T')[0];
-      if (localStorage.getItem('focusflow_last_backup') === today) return;
+      if (LS.get('focusflow_last_backup') === today) return;
       try {
         const form = new FormData();
         form.append('metadata', new Blob([JSON.stringify({ name: `focusflow_backup_${today}.json`, mimeType: 'application/json' })], { type: 'application/json' }));
         form.append('file', new Blob([JSON.stringify(state)], { type: 'application/json' }));
         await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form });
-        localStorage.setItem('focusflow_last_backup', today);
+        LS.set('focusflow_last_backup', today);
       } catch(e) {}
     }
 
     function saveLocally(sync = true) {
       state.updatedAt = Date.now();
-      localStorage.setItem('focusflow_data', JSON.stringify(state));
+      LS.set('focusflow_data', JSON.stringify(state));
       if (sync) syncToDrive();
     }
 
     function checkDateShift() {
       try {
         const today = new Date().toDateString();
-        const lastDate = localStorage.getItem('focusflow_last_date');
-        if (!lastDate) { localStorage.setItem('focusflow_last_date', today); return; }
+        const lastDate = LS.get('focusflow_last_date');
+        if (!lastDate) { LS.set('focusflow_last_date', today); return; }
         if (lastDate !== today) {
           const daysDiff = Math.floor((new Date(today) - new Date(lastDate)) / 86400000);
           let shifted = false;
@@ -305,22 +308,16 @@
             }
           });
           if (shifted) saveLocally();
-          localStorage.setItem('focusflow_last_date', today);
+          LS.set('focusflow_last_date', today);
         }
-      } catch(e) { console.error(e); }
+      } catch(e) {}
     }
 
-    // 3. БЕЗОПАСНОЕ ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК (Без использования event.target)
     function switchTab(tab) {
       currentTab = tab;
-      
-      // Сбрасываем все вкладки
       document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-      
-      // Активируем нужную вкладку по явному ID
       const activeBtn = document.getElementById('tab-' + tab);
       if (activeBtn) activeBtn.classList.add('active');
-      
       document.getElementById('tasks-container').classList.toggle('hidden', tab === 'todiscuss');
       document.getElementById('todiscuss-container').classList.toggle('hidden', tab !== 'todiscuss');
       render();
@@ -374,3 +371,283 @@
         saveLocally(); render();
       }
     }
+
+    function updateTaskDate(id, newDate) {
+      const task = state.tasks.find(t => t && t.id === id);
+      if (task) {
+        task.date = newDate;
+        state.tasks = state.tasks.filter(t => t && t.id !== id);
+        state.tasks.unshift(task);
+        saveLocally(); render();
+      }
+    }
+
+    function updateTaskTitle(id, val) {
+      const task = state.tasks.find(t => t && t.id === id);
+      if (task && val.trim()) { task.title = val.trim(); saveLocally(); }
+    }
+
+    function toggleFlag(id) {
+      const task = state.tasks.find(t => t && t.id === id);
+      if (task) {
+        if (task.flag) task.flag = null;
+        else {
+          const used = state.tasks.filter(t => t && t.tab === currentTab && t.status === 'active' && t.flag).map(t => t.flag);
+          const avail = PALETTE.filter(c => !used.includes(c));
+          task.flag = avail.length > 0 ? avail[0] : PALETTE[0];
+        }
+        saveLocally(); render();
+      }
+    }
+
+    function completeNowTask() {
+      const active = state.tasks.filter(t => t && t.tab === currentTab && t.status === 'active');
+      const sorted = [...active].sort((a, b) => GROUPS.indexOf(a.date) - GROUPS.indexOf(b.date));
+      if (sorted.length > 0) toggleTaskStatus(sorted[0].id);
+    }
+
+    function addPerson() {
+      const input = document.getElementById('personInput');
+      if (!input.value.trim()) return;
+      state.people.unshift({ id: 'p_'+Date.now(), name: input.value.trim(), isPinned: false, notes: [''] });
+      input.value = ''; saveLocally(); render();
+    }
+
+    function deletePerson(id) { state.people = state.people.filter(p => p && p.id !== id); saveLocally(); render(); }
+    function updatePersonName(id, val) { const p = state.people.find(x => x && x.id === id); if (p && val.trim()) { p.name = val.trim(); saveLocally(); } }
+    function toggleNotes() { notesExpanded = !notesExpanded; render(); }
+    function updateNote(pId, idx, val) { const p = state.people.find(x => x && x.id === pId); if (p && p.notes) { p.notes[idx] = val; saveLocally(false); } }
+
+    function handleNoteKey(e, pId, idx) {
+      const p = state.people.find(x => x && x.id === pId);
+      if (!p || !p.notes) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (p.notes[idx].trim() === '') {
+          if (p.notes.length > 1) { p.notes.splice(idx, 1); saveLocally(); render(); setTimeout(() => document.getElementById(`n-${pId}-${idx-1}`)?.focus(), 0); }
+          else e.target.blur();
+        } else {
+          p.notes.splice(idx + 1, 0, ''); saveLocally(); render(); setTimeout(() => document.getElementById(`n-${pId}-${idx+1}`)?.focus(), 0);
+        }
+      } else if (e.key === 'Backspace' && e.target.value === '' && p.notes.length > 1) {
+        e.preventDefault();
+        p.notes.splice(idx, 1); saveLocally(); render(); setTimeout(() => { const prev = document.getElementById(`n-${pId}-${idx-1}`); if (prev) { prev.focus(); prev.selectionStart = prev.value.length; } }, 0);
+      }
+    }
+    
+    let draggedEl = null;
+
+    function handleDragStart(e, type) {
+      draggedEl = e.target.closest(type === 'task' ? '.task' : '.person');
+      if(e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => { if (draggedEl) draggedEl.classList.add('dragging'); }, 0);
+    }
+    
+    function handleDragEnd(e) {
+      if (draggedEl) draggedEl.classList.remove('dragging');
+      draggedEl = null;
+    }
+
+    function onDragOverList(e) {
+      e.preventDefault();
+      const container = e.currentTarget;
+      const afterElement = getDragAfterElement(container, e.clientY);
+      const dragging = document.querySelector('.dragging');
+      if (dragging) {
+        if (afterElement == null) container.appendChild(dragging);
+        else container.insertBefore(dragging, afterElement);
+      }
+    }
+
+    function getDragAfterElement(container, y) {
+      const draggables = [...container.querySelectorAll('.task:not(.dragging), .person:not(.dragging), .group-title')];
+      return draggables.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        return (offset < 0 && offset > closest.offset) ? { offset, element: child } : closest;
+      }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    function onDropTask(e) {
+      e.preventDefault();
+      if (draggedEl) draggedEl.classList.remove('dragging');
+      draggedEl = null;
+      
+      const activeTabTasks = [];
+      let currentGroup = 'today';
+      
+      const children = Array.from(document.getElementById('taskList').children);
+      children.forEach(child => {
+        if (child.classList.contains('group-title')) {
+          currentGroup = child.getAttribute('data-group');
+        } else if (child.classList.contains('task')) {
+          const task = state.tasks.find(t => t && t.id === child.dataset.id);
+          if (task) { 
+            task.date = currentGroup;
+            activeTabTasks.push(task); 
+          }
+        }
+      });
+      
+      const otherTasks = state.tasks.filter(t => t && (t.tab !== currentTab || t.status !== 'active'));
+      state.tasks = [...activeTabTasks, ...otherTasks];
+      saveLocally(); render();
+    }
+
+    function onDropPerson(e) {
+      e.preventDefault();
+      if (draggedEl) draggedEl.classList.remove('dragging');
+      draggedEl = null;
+      
+      const newOrder = [];
+      let isPinnedGrp = true;
+
+      Array.from(document.getElementById('peopleList').children).forEach(child => {
+        if (child.classList.contains('group-title')) isPinnedGrp = child.dataset.group === 'pinned';
+        else if (child.classList.contains('person')) {
+          const p = state.people.find(x => x && x.id === child.dataset.id);
+          if (p) { p.isPinned = isPinnedGrp; newOrder.push(p); }
+        }
+      });
+      state.people = newOrder;
+      saveLocally(); render();
+    }
+
+    function render() { 
+      try {
+        if (currentTab === 'todiscuss') renderPeople(); 
+        else renderTasks(); 
+      } catch (e) { console.error("Render Error:", e); }
+    }
+
+    function renderTasks() {
+      const list = document.getElementById('taskList');
+      const nowBar = document.getElementById('nowBar');
+      list.innerHTML = '';
+
+      let tabTasks = state.tasks.filter(t => t && t.tab === currentTab);
+      
+      if (currentView === 'active') {
+        let activeTasks = tabTasks.filter(t => t.status === 'active');
+        document.getElementById('taskCount').innerText = activeTasks.length;
+
+        const sortedForNow = [...activeTasks].sort((a, b) => GROUPS.indexOf(a.date) - GROUPS.indexOf(b.date));
+        if (sortedForNow.length > 0) { 
+          nowBar.classList.remove('hidden'); 
+          document.getElementById('nowTitle').innerText = sortedForNow[0].title || 'Без названия'; 
+        } else nowBar.classList.add('hidden');
+
+        GROUPS.forEach(gKey => {
+          const grp = activeTasks.filter(t => t.date === gKey);
+          if (grp.length > 0) {
+            const titleEl = document.createElement('div');
+            titleEl.className = `group-title ${gKey.replace('_', '-')}`;
+            titleEl.dataset.group = gKey;
+            titleEl.innerText = GROUP_LABELS[gKey];
+            list.appendChild(titleEl);
+            grp.forEach(t => list.appendChild(createTaskEl(t)));
+          }
+        });
+      } else {
+        let doneTasks = tabTasks.filter(t => t.status === 'done').sort((a, b) => (b.completedAt||0) - (a.completedAt||0));
+        document.getElementById('taskCount').innerText = doneTasks.length;
+        nowBar.classList.add('hidden');
+        if (doneTasks.length === 0) list.innerHTML = '<p style="text-align:center; padding: 20px; color:#888;">Нет выполненных задач</p>';
+        doneTasks.forEach(t => list.appendChild(createTaskEl(t)));
+      }
+    }
+
+    function createTaskEl(t) {
+      const div = document.createElement('div');
+      div.className = 'task'; div.dataset.id = t.id;
+      const isDone = t.status === 'done';
+      if (!isDone) { 
+        div.draggable = true; 
+        div.ondragstart = (e) => handleDragStart(e, 'task'); 
+        div.ondragend = handleDragEnd;
+      }
+      
+      const safeTitle = (t.title || '').replace(/"/g, '&quot;');
+      const flagHtml = t.flag ? `<span class="task-flag" style="color:${t.flag};" ondblclick="toggleFlag('${t.id}')">!</span>` : '';
+
+      div.innerHTML = `
+        <div class="drag-handle" ondblclick="toggleFlag('${t.id}')">⋮⋮</div>
+        ${flagHtml}
+        <input type="checkbox" class="task-checkbox" ${isDone ? 'checked' : ''} onclick="toggleTaskStatus('${t.id}')">
+        <input type="text" class="task-title" value="${safeTitle}" ${isDone ? 'readonly' : ''} onblur="updateTaskTitle('${t.id}', this.value)" style="text-decoration: ${isDone ? 'line-through' : 'none'}; color: ${isDone ? '#888' : 'inherit'};">
+      `;
+      
+      if (!isDone) {
+        const sel = document.createElement('select');
+        sel.style.cssText = "border:1px solid #eee; padding:4px; border-radius:4px; outline:none;";
+        sel.onchange = (e) => updateTaskDate(t.id, e.target.value);
+        GROUPS.forEach(g => { 
+          const opt = document.createElement('option'); 
+          opt.value = g; opt.innerText = GROUP_LABELS[g]; 
+          if (g === t.date) opt.selected = true; 
+          sel.appendChild(opt); 
+        });
+        div.appendChild(sel);
+      } else {
+         const dateTxt = t.completedAt ? new Date(t.completedAt).toLocaleDateString() : '';
+         div.innerHTML += `<span style="color:#bbb; font-size:12px;">${dateTxt}</span>`;
+      }
+      return div;
+    }
+
+    function renderPeople() {
+      const list = document.getElementById('peopleList');
+      document.getElementById('peopleCount').innerText = state.people.length;
+      list.innerHTML = '';
+      
+      const pinned = state.people.filter(p => p && p.isPinned);
+      const rest = state.people.filter(p => p && !p.isPinned);
+      
+      if (pinned.length > 0) {
+        const titleEl = document.createElement('div');
+        titleEl.className = 'group-title pinned'; titleEl.dataset.group = 'pinned'; titleEl.innerText = 'Pinned';
+        list.appendChild(titleEl);
+        pinned.forEach(p => list.appendChild(createPersonEl(p)));
+      }
+      if (rest.length > 0) {
+        const titleEl = document.createElement('div');
+        titleEl.className = 'group-title'; titleEl.dataset.group = 'rest'; titleEl.innerText = 'Everyone else';
+        list.appendChild(titleEl);
+        rest.forEach(p => list.appendChild(createPersonEl(p)));
+      }
+    }
+
+    function createPersonEl(p) {
+      const div = document.createElement('div');
+      div.className = 'person'; div.dataset.id = p.id; div.draggable = true;
+      div.ondragstart = (e) => handleDragStart(e, 'person');
+      div.ondragend = handleDragEnd;
+      
+      const safeName = (p.name || '').replace(/"/g, '&quot;');
+      const safeNotes = Array.isArray(p.notes) ? p.notes : [];
+      
+      const notesHtml = safeNotes.map((n, i) => {
+        const safeNote = (n || '').replace(/"/g, '&quot;');
+        return `
+        <div class="note-line">
+          <span class="note-bullet">•</span>
+          <input type="text" class="note-input" value="${safeNote}" id="n-${p.id}-${i}"
+                 onkeydown="handleNoteKey(event, '${p.id}', ${i})"
+                 oninput="updateNote('${p.id}', ${i}, this.value)"
+                 onblur="saveLocally()">
+        </div>
+      `}).join('');
+
+      div.innerHTML = `
+        <div class="person-header">
+          <div class="drag-handle">⋮⋮</div>
+          <input type="text" class="person-name" value="${safeName}" onblur="updatePersonName('${p.id}', this.value)">
+          <button class="btn-delete" onclick="deletePerson('${p.id}')">✕</button>
+        </div>
+        <div class="notes-container ${notesExpanded ? '' : 'hidden'}">${notesHtml}</div>
+      `;
+      return div;
+    }
+  </script>
+</body>
+</html>
