@@ -5,17 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Планировщик</title>
   <link rel="manifest" href="manifest.json">
+  <!-- Подключение официальной библиотеки авторизации Google -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 500px; margin: 20px auto; padding: 0 15px; }
+    .auth-block { margin-bottom: 15px; padding: 12px; background: #f0f4f8; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
     .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
     input { flex: 1; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; }
     button { padding: 10px 15px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    button:disabled { background: #6c757d; cursor: default; }
     ul { list-style: none; padding: 0; }
     li { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+    .status { font-size: 13px; color: #555; }
   </style>
 </head>
 <body>
-  <h2>Мой Планировщик (Тест)</h2>
+  <h2>Мой Планировщик</h2>
+
+  <div class="auth-block">
+    <button id="authBtn" onclick="handleAuth()">Войти в Google</button>
+    <span id="syncStatus" class="status">Офлайн-режим</span>
+  </div>
   
   <div class="input-group">
     <input type="text" id="taskInput" placeholder="Новая задача...">
@@ -25,11 +35,56 @@
   <ul id="taskList"></ul>
 
   <script>
+    // ⚠️ ВСТАВЬТЕ СЮДА ВАШ CLIENT ID ИЗ GOOGLE CLOUD CONSOLE
+    const CLIENT_ID = '49484425550-6lbhol7vhovnrhosuh3qlahfv9eavgee.apps.googleusercontent.com';
+    const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+
+    let tokenClient;
+    let accessToken = null;
+    let driveFileId = null;
+
     const input = document.getElementById('taskInput');
     const list = document.getElementById('taskList');
+    const syncStatus = document.getElementById('syncStatus');
+    const authBtn = document.getElementById('authBtn');
+
+    window.onload = () => {
+      renderTasks();
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+
+      // Инициализация Google Identity Services
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: async (response) => {
+          if (response.error) return;
+          accessToken = response.access_token;
+          authBtn.innerText = 'Google подключен';
+          authBtn.disabled = true;
+          syncStatus.innerText = 'Загрузка с Диска...';
+          await initDriveSync();
+        },
+      });
+    };
+
+    function handleAuth() {
+      tokenClient.requestAccessToken();
+    }
+
+    function getTasks() {
+      return JSON.parse(localStorage.getItem('test_tasks') || '[]');
+    }
+
+    function saveTasksLocally(tasks) {
+      localStorage.setItem('test_tasks', JSON.stringify(tasks));
+      renderTasks();
+      if (accessToken && driveFileId) {
+        syncToDrive();
+      }
+    }
 
     function renderTasks() {
-      const tasks = JSON.parse(localStorage.getItem('test_tasks') || '[]');
+      const tasks = getTasks();
       list.innerHTML = tasks.map((t, index) => 
         `<li>${t} <button onclick="deleteTask(${index})" style="background:none;color:red;padding:0;">✕</button></li>`
       ).join('');
@@ -37,25 +92,81 @@
 
     function addTask() {
       if (!input.value.trim()) return;
-      const tasks = JSON.parse(localStorage.getItem('test_tasks') || '[]');
+      const tasks = getTasks();
       tasks.push(input.value.trim());
-      localStorage.setItem('test_tasks', JSON.stringify(tasks));
       input.value = '';
-      renderTasks();
+      saveTasksLocally(tasks);
     }
 
     function deleteTask(index) {
-      const tasks = JSON.parse(localStorage.getItem('test_tasks') || '[]');
+      const tasks = getTasks();
       tasks.splice(index, 1);
-      localStorage.setItem('test_tasks', JSON.stringify(tasks));
+      saveTasksLocally(tasks);
+    }
+
+    // --- Логика работы с Google Drive API ---
+
+    async function initDriveSync() {
+      try {
+        // Поиск файла planner_data.json на Диске
+        const res = await fetch("https://www.googleapis.com/drive/v3/files?q=name='planner_data.json' and trashed=false", {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const data = await res.json();
+
+        if (data.files && data.files.length > 0) {
+          driveFileId = data.files[0].id;
+          await loadFromDrive();
+        } else {
+          await createDriveFile();
+        }
+        syncStatus.innerText = 'Синхронизировано';
+      } catch (err) {
+        syncStatus.innerText = 'Ошибка синхронизации';
+        console.error(err);
+      }
+    }
+
+    async function loadFromDrive() {
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const remoteTasks = await res.json();
+      localStorage.setItem('test_tasks', JSON.stringify(remoteTasks));
       renderTasks();
     }
 
-    renderTasks();
+    async function createDriveFile() {
+      const metadata = { name: 'planner_data.json', mimeType: 'application/json' };
+      const tasks = getTasks();
 
-    // Регистрация Service Worker для PWA
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+      form.append('file', new Blob([JSON.stringify(tasks)], { type: 'application/json' }));
+
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: form
+      });
+      const file = await res.json();
+      driveFileId = file.id;
+    }
+
+    async function syncToDrive() {
+      if (!driveFileId || !accessToken) return;
+      syncStatus.innerText = 'Сохранение...';
+      const tasks = getTasks();
+      
+      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(tasks)
+      });
+      syncStatus.innerText = 'Синхронизировано';
     }
   </script>
 </body>
