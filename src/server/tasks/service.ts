@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, min, ne, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { changeLog, settings, taskHorizons, tasks, type Task } from "@/db/schema";
+import { changeLog, settings, taskHorizons, taskLists, tasks, type Task } from "@/db/schema";
 import { taskFlagColors } from "@/lib/taskFlags";
 import { calculatePriority } from "./priority";
 import { nextOccurrence, presetToRule } from "./recurrence";
@@ -23,6 +23,7 @@ export const createTaskSchema = z.object({
     .optional()
     .default("planned"),
   horizon: z.enum(taskHorizons).optional().default("today"),
+  list: z.enum(taskLists).optional().default("work"),
   importance: z.coerce.number().int().min(1).max(5).optional().default(3),
   energy: z.coerce.number().int().min(1).max(5).optional().default(3),
   estimateMinutes: z.coerce.number().int().positive().max(10_080).nullable().optional(),
@@ -174,7 +175,7 @@ export async function createTask(
     const duplicates = await db
       .select()
       .from(tasks)
-      .where(and(eq(tasks.title, data.title), ne(tasks.status, "done")))
+      .where(and(eq(tasks.title, data.title), eq(tasks.list, data.list), ne(tasks.status, "done")))
       .limit(1);
     if (duplicates[0]) {
       throw new Error("A similar unfinished task already exists.");
@@ -193,6 +194,7 @@ export async function createTask(
       notes: data.notes,
       status: data.status,
       horizon: data.horizon,
+      list: data.list,
       importance: data.importance,
       energy: data.energy,
       estimateMinutes: data.estimateMinutes ?? null,
@@ -275,6 +277,7 @@ async function createNextRecurringTask(task: Task): Promise<void> {
       notes: task.notes,
       status: "planned",
       horizon: task.horizon,
+      list: task.list,
       importance: task.importance,
       energy: task.energy,
       estimateMinutes: task.estimateMinutes,

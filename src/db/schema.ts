@@ -17,6 +17,8 @@ export const taskHorizons = [
   "later",
 ] as const;
 
+export const taskLists = ["work", "personal"] as const;
+
 export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -24,6 +26,7 @@ export const tasks = sqliteTable("tasks", {
   status: text("status", { enum: taskStatuses }).notNull().default("planned"),
   sortOrder: integer("sort_order").notNull().default(0),
   horizon: text("horizon", { enum: taskHorizons }).notNull().default("today"),
+  list: text("list", { enum: taskLists }).notNull().default("work"),
   importance: integer("importance").notNull().default(3),
   energy: integer("energy").notNull().default(3),
   estimateMinutes: integer("estimate_minutes"),

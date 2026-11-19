@@ -39,6 +39,16 @@ describe("task workflow", () => {
     await expect(createTask({ title: "Позвонить коллеге" })).rejects.toThrow("already exists");
   });
 
+  it("allows the same title in work and personal lists", async () => {
+    await createTask({ title: "Купить молоко", list: "work" });
+    const personal = await createTask({ title: "Купить молоко", list: "personal" });
+    expect(personal.list).toBe("personal");
+    await expect(createTask({ title: "Купить молоко", list: "personal" })).rejects.toThrow("already exists");
+    const all = await listTasks();
+    expect(all.filter((task) => task.list === "work")).toHaveLength(1);
+    expect(all.filter((task) => task.list === "personal")).toHaveLength(1);
+  });
+
   it("creates the next occurrence when a recurring task is completed", async () => {
     const task = await createTask({
       title: "Ежедневный обзор",
@@ -47,7 +57,19 @@ describe("task workflow", () => {
     });
     await updateTask(task.id, { status: "done" });
     const all = await listTasks();
-    expect(all.some((item) => item.id !== task.id && item.title === task.title)).toBe(true);
+    expect(all.some((item) => item.id !== task.id && item.title === task.title && item.list === "work")).toBe(true);
+  });
+
+  it("keeps a recurring task in its own list", async () => {
+    const task = await createTask({
+      title: "Личная зарядка",
+      list: "personal",
+      dueAt: new Date("2026-10-19T08:00:00Z"),
+      recurrence: "daily",
+    });
+    await updateTask(task.id, { status: "done" });
+    const next = (await listTasks()).find((item) => item.id !== task.id && item.title === task.title);
+    expect(next?.list).toBe("personal");
   });
 });
 

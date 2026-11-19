@@ -5,12 +5,9 @@ import {
   Check,
   ChevronsDown,
   ChevronsUp,
-  Download,
   GripVertical,
-  Lightbulb,
   Pin,
   Plus,
-  Settings,
   Sparkles,
   Trash2,
   Users,
@@ -19,21 +16,13 @@ import { DragEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutE
 import { formatCompletedAt, sortByCompletedAtDesc } from "@/lib/doneTasks";
 import { applyNoteEnter, prefixFirstNoteLine } from "@/lib/noteList";
 import { nextTaskFlagColor } from "@/lib/taskFlags";
+import { usePlanner } from "@/components/PlannerProvider";
+import type { Horizon, StoredPerson, StoredTask, TaskList } from "@/lib/plannerDocument";
 
-type Status = "planned" | "in_progress" | "blocked" | "done" | "archived";
-type Horizon = "overdue" | "today" | "tomorrow" | "this_week" | "next_week" | "later";
-type Task = {
-  id: string;
-  title: string;
-  notes: string;
-  status: Status;
-  horizon: Horizon;
-  estimateMinutes: number | null;
-  recurrenceRule: string | null;
-  flagColor: string | null;
-  completedAt: string | null;
-};
-type Person = { id: string; name: string; topics: string; pinned: boolean; sortOrder: number; updatedAt: string };
+type Task = StoredTask;
+type Person = StoredPerson;
+
+type Tab = TaskList | "discuss";
 
 const horizons: Array<[Horizon, string]> = [
   ["overdue", "Overdue"],
@@ -44,25 +33,32 @@ const horizons: Array<[Horizon, string]> = [
   ["later", "Later"],
 ];
 
+const tabs: Array<[Tab, string]> = [
+  ["work", "Work"],
+  ["personal", "Personal"],
+  ["discuss", "To discuss"],
+];
+
 export function Dashboard() {
+  const planner = usePlanner();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  const [tab, setTab] = useState<Tab>("work");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
 
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setLoading(true);
     try {
-      const [taskResponse, peopleResponse] = await Promise.all([
-        fetch("/api/tasks", { cache: "no-store" }),
-        fetch("/api/people", { cache: "no-store" }),
-      ]);
-      setTasks(await taskResponse.json());
-      setPeople(await peopleResponse.json());
+      const data = await planner.load();
+      setTasks(data.tasks);
+      setPeople(data.people);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Couldn’t load the lists.");
     } finally {
       if (!options?.silent) setLoading(false);
     }
-  }, []);
+  }, [planner]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), 0);
@@ -90,30 +86,29 @@ export function Dashboard() {
     };
   }, [refresh]);
 
-  async function reorderTasks(
+  async function reorderTaskList(
     ids: string[],
     change?: { movedId: string; horizon: Horizon },
   ) {
-    const response = await fetch("/api/tasks/reorder", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, ...change }),
-    });
-    if (!response.ok) setToast((await response.json()).error);
+    try {
+      await planner.reorderTasks(ids, change);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Couldn’t change the order.");
+    }
     await refresh();
   }
 
   async function patchTask(id: string, patch: Record<string, unknown>) {
-    const response = await fetch(`/api/tasks/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    if (!response.ok) setToast((await response.json()).error);
+    try {
+      await planner.patchTask(id, patch as Partial<Task>);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Couldn’t update the task.");
+    }
     await refresh();
   }
 
-  const active = tasks.filter((task) => !["done", "archived"].includes(task.status));
+  const listed = tab === "discuss" ? [] : tasks.filter((task) => task.list === tab);
+  const active = listed.filter((task) => !["done", "archived"].includes(task.status));
   const focus = active.find((task) => task.status === "in_progress") ?? active[0];
 
   return (
@@ -123,13 +118,30 @@ export function Dashboard() {
           <span className="brandMark"><Brain size={18} /></span>
           <strong>FocusFlow</strong>
         </div>
+        <button type="button" className="signOut" onClick={planner.signOut}>Sign out</button>
       </header>
+      <div className="appTabs" role="tablist" aria-label="Sections">
+        {tabs.map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={tab === value}
+            className={tab === value ? "active" : ""}
+            onClick={() => setTab(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
-      <QuickCapture onCreated={refresh} onError={setToast} />
+      {tab !== "discuss" && <QuickCapture key={tab} list={tab} onCreated={refresh} onError={setToast} />}
 
-      {loading && tasks.length === 0 ? <div className="empty">Loading…</div> : (
-        <div className="dashboardGrid">
-          <section className="taskColumn">
+      {loading && tasks.length === 0 && people.length === 0 ? <div className="empty">Loading…</div> : (
+        tab === "discuss" ? (
+          <PeoplePanel people={people} onChanged={() => refresh({ silent: true })} onError={setToast} />
+        ) : (
+          <div className="tabPage">
             {focus && (
               <div className="compactFocus">
                 <span><Sparkles size={13} /> Now</span>
@@ -137,18 +149,9 @@ export function Dashboard() {
                 <button onClick={() => patchTask(focus.id, { status: "done" })}><Check size={14} /> Done</button>
               </div>
             )}
-            <CompactTaskList tasks={tasks} onPatch={patchTask} onReorder={reorderTasks} />
-          </section>
-
-          <aside className="rightColumn">
-            <PeoplePanel people={people} onChanged={() => refresh({ silent: true })} onError={setToast} />
-            <ScratchPad onError={setToast} />
-            <details className="utilityPanel settingsPanel">
-              <summary><Settings size={15} /> Settings</summary>
-              <SettingsView />
-            </details>
-          </aside>
-        </div>
+            <CompactTaskList key={tab} tasks={listed} onPatch={patchTask} onReorder={reorderTaskList} />
+          </div>
+        )
       )}
       {toast && <button className="toast" onClick={() => setToast("")}>{toast}</button>}
     </main>
@@ -156,23 +159,25 @@ export function Dashboard() {
 }
 
 function QuickCapture({
+  list,
   onCreated,
   onError,
 }: {
+  list: TaskList;
   onCreated: () => Promise<void>;
   onError: (message: string) => void;
 }) {
+  const planner = usePlanner();
   const [title, setTitle] = useState("");
   const [horizon, setHorizon] = useState<Horizon>("today");
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!title.trim()) return;
-    const response = await fetch("/api/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, horizon }),
-    });
-    if (!response.ok) return onError((await response.json()).error);
+    try {
+      await planner.createTask({ title, horizon, list });
+    } catch (error) {
+      return onError(error instanceof Error ? error.message : "Couldn’t create the task.");
+    }
     setTitle("");
     setHorizon("today");
     await onCreated();
@@ -317,51 +322,6 @@ function CompactTaskList({
   );
 }
 
-function ScratchPad({ onError }: { onError: (message: string) => void }) {
-  const [text, setText] = useState("");
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void fetch("/api/scratchpad")
-        .then((response) => response.json())
-        .then((data: { text?: string }) => {
-          setText(data.text ?? "");
-          setReady(true);
-        });
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!ready) return;
-    const timer = window.setTimeout(() => {
-      void fetch("/api/scratchpad", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      }).then(async (response) => {
-        if (!response.ok) onError((await response.json()).error);
-      });
-    }, 400);
-    return () => window.clearTimeout(timer);
-  }, [text, ready, onError]);
-
-  return (
-    <section className="compactSection scratchPad">
-      <div className="compactSectionHead">
-        <h2><Lightbulb size={16} /> Personal, so it doesn’t distract</h2>
-      </div>
-      <textarea
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        placeholder="Errands and ideas. Write them here, get back to work, and move them into your notes later."
-        aria-label="Personal errands and ideas"
-      />
-    </section>
-  );
-}
-
 function PeoplePanel({
   people,
   onChanged,
@@ -371,34 +331,33 @@ function PeoplePanel({
   onChanged: () => Promise<void>;
   onError: (message: string) => void;
 }) {
+  const planner = usePlanner();
   const [name, setName] = useState("");
   const [expandedAll, setExpandedAll] = useState(false);
 
   async function addPerson(event: FormEvent) {
     event.preventDefault();
     if (!name.trim()) return;
-    const response = await fetch("/api/people", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    if (!response.ok) return onError((await response.json()).error);
+    try {
+      await planner.createPerson(name);
+    } catch (error) {
+      return onError(error instanceof Error ? error.message : "Couldn’t add the person.");
+    }
     setName("");
     await onChanged();
   }
 
   async function savePerson(id: string, patch: Record<string, string | boolean>) {
-    const response = await fetch(`/api/people/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    if (!response.ok) return onError((await response.json()).error);
+    try {
+      await planner.patchPerson(id, patch as Partial<Pick<Person, "name" | "topics" | "pinned">>);
+    } catch (error) {
+      return onError(error instanceof Error ? error.message : "Couldn’t update the person.");
+    }
     await onChanged();
   }
 
   return (
-    <section className="compactSection peoplePanel">
+    <section className="compactSection peoplePanel discussPage">
       <div className="compactSectionHead">
         <h2><Users size={16} /> To discuss <small>{people.length}</small></h2>
         {people.length > 0 && (
@@ -416,7 +375,7 @@ function PeoplePanel({
         <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Add a person…" />
         <button className="iconButton" title="Add"><Plus size={15} /></button>
       </form>
-      <PeopleList people={people} expandedAll={expandedAll} onSave={savePerson} onChanged={onChanged} />
+      <PeopleList people={people} expandedAll={expandedAll} onSave={savePerson} onChanged={onChanged} onError={onError} />
     </section>
   );
 }
@@ -426,12 +385,15 @@ function PeopleList({
   expandedAll,
   onSave,
   onChanged,
+  onError,
 }: {
   people: Person[];
   expandedAll: boolean;
   onSave: (id: string, patch: Record<string, string | boolean>) => Promise<void>;
   onChanged: () => Promise<void>;
+  onError: (message: string) => void;
 }) {
+  const planner = usePlanner();
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
@@ -446,14 +408,14 @@ function PeopleList({
     const groupIds = next.filter((person) => person.pinned === pinned).map((person) => person.id);
     setDraggingId(null);
     setDropIndex(null);
-    await fetch("/api/people/reorder", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ids: groupIds,
-        ...(pinned === source.pinned ? {} : { movedId: fromId, pinned }),
-      }),
-    });
+    try {
+      await planner.reorderPeople(
+        groupIds,
+        pinned === source.pinned ? undefined : { movedId: fromId, pinned },
+      );
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Couldn’t change the order.");
+    }
     await onChanged();
   }
 
@@ -471,7 +433,11 @@ function PeopleList({
             dropBefore={dropIndex === index}
             onSave={(patch) => onSave(person.id, patch)}
             onDelete={async () => {
-              await fetch(`/api/people/${person.id}`, { method: "DELETE" });
+              try {
+                await planner.deletePerson(person.id);
+              } catch (error) {
+                onError(error instanceof Error ? error.message : "Couldn’t delete the person.");
+              }
               await onChanged();
             }}
             onDragStart={() => setDraggingId(person.id)}
@@ -644,12 +610,6 @@ function TaskEditor({
           onBlur={() => title.trim() && title !== task.title && void onPatch(task.id, { title })}
         />
       </div>
-      {(task.estimateMinutes || task.recurrenceRule) && (
-        <div className="meta">
-          {task.estimateMinutes && <span>{task.estimateMinutes} min</span>}
-          {task.recurrenceRule && <span>Repeats</span>}
-        </div>
-      )}
     </div>
   );
 }
@@ -751,23 +711,3 @@ function TaskRow({
   );
 }
 
-function SettingsView() {
-  const [backup, setBackup] = useState<{ note: string; directory: string; lastBackupAt: string | null } | null>(null);
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void fetch("/api/backup/status").then((response) => response.json()).then(setBackup);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-  return (
-    <div>
-      <div className="settingsCard">
-        <h3>Backups</h3>
-        <p>{backup?.note ?? "Checking the backup folder…"}</p>
-        {backup?.directory && <p>{backup.directory}</p>}
-        <p>{backup?.lastBackupAt ? `Last backup: ${new Date(backup.lastBackupAt).toLocaleString("en")}` : "An automatic backup is created every 3 minutes, and only when something changed."}</p>
-        <a className="button ghost" href="/api/backup"><Download size={16} /> Download backup</a>
-      </div>
-    </div>
-  );
-}

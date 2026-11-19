@@ -32,7 +32,8 @@ function createDatabase(): DbState {
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'planned', sort_order INTEGER NOT NULL DEFAULT 0,
-      horizon TEXT NOT NULL DEFAULT 'today', importance INTEGER NOT NULL DEFAULT 3,
+      horizon TEXT NOT NULL DEFAULT 'today', list TEXT NOT NULL DEFAULT 'work',
+      importance INTEGER NOT NULL DEFAULT 3,
       energy INTEGER NOT NULL DEFAULT 3, estimate_minutes INTEGER, due_at INTEGER,
       tags TEXT NOT NULL DEFAULT '[]', flag_color TEXT, recurrence_rule TEXT, recurrence_source_id TEXT,
       priority_override REAL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
@@ -81,6 +82,9 @@ function createDatabase(): DbState {
   }
   if (!taskColumns.some((column) => column.name === "flag_color")) {
     sqlite.exec("ALTER TABLE tasks ADD COLUMN flag_color TEXT");
+  }
+  if (!taskColumns.some((column) => column.name === "list")) {
+    sqlite.exec("ALTER TABLE tasks ADD COLUMN list TEXT NOT NULL DEFAULT 'work'");
   }
   sqlite.exec("UPDATE tasks SET horizon = 'later' WHERE horizon IS NULL OR horizon IN ('', 'none')");
   sqlite.exec("UPDATE tasks SET status = 'planned' WHERE status = 'inbox'");
