@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "FocusFlow",
-  description: "Local personal assistant",
+  description: "Personal task planner and notes for conversations",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

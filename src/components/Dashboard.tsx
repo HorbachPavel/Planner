@@ -39,10 +39,13 @@ const tabs: Array<[Tab, string]> = [
   ["discuss", "To discuss"],
 ];
 
+// The screen updates by itself after each change, so there is nothing to reload.
+const noChange = async () => {};
+
 export function Dashboard() {
   const planner = usePlanner();
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [people, setPeople] = useState<Person[]>([]);
+  // The lists live in PlannerProvider and update instantly after every change.
+  const { tasks, people, saving, saveError, clearSaveError } = planner;
   const [tab, setTab] = useState<Tab>("work");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
@@ -50,9 +53,7 @@ export function Dashboard() {
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setLoading(true);
     try {
-      const data = await planner.load();
-      setTasks(data.tasks);
-      setPeople(data.people);
+      await planner.load();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Couldn’t load the lists.");
     } finally {
@@ -95,7 +96,6 @@ export function Dashboard() {
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Couldn’t change the order.");
     }
-    await refresh();
   }
 
   async function patchTask(id: string, patch: Record<string, unknown>) {
@@ -104,7 +104,6 @@ export function Dashboard() {
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Couldn’t update the task.");
     }
-    await refresh();
   }
 
   const listed = tab === "discuss" ? [] : tasks.filter((task) => task.list === tab);
@@ -118,6 +117,7 @@ export function Dashboard() {
           <span className="brandMark"><Brain size={18} /></span>
           <strong>FocusFlow</strong>
         </div>
+        {saving && <span className="saveStatus" style={{ marginLeft: "auto", marginRight: 8, fontSize: 12, opacity: 0.6 }}>Saving…</span>}
         <button type="button" className="signOut" onClick={planner.signOut}>Sign out</button>
       </header>
       <div className="appTabs" role="tablist" aria-label="Sections">
@@ -135,11 +135,11 @@ export function Dashboard() {
         ))}
       </div>
 
-      {tab !== "discuss" && <QuickCapture key={tab} list={tab} onCreated={refresh} onError={setToast} />}
+      {tab !== "discuss" && <QuickCapture key={tab} list={tab} onCreated={noChange} onError={setToast} />}
 
       {loading && tasks.length === 0 && people.length === 0 ? <div className="empty">Loading…</div> : (
         tab === "discuss" ? (
-          <PeoplePanel people={people} onChanged={() => refresh({ silent: true })} onError={setToast} />
+          <PeoplePanel people={people} onChanged={noChange} onError={setToast} />
         ) : (
           <div className="tabPage">
             {focus && (
@@ -153,7 +153,9 @@ export function Dashboard() {
           </div>
         )
       )}
-      {toast && <button className="toast" onClick={() => setToast("")}>{toast}</button>}
+      {(toast || saveError) && (
+        <button className="toast" onClick={() => { setToast(""); clearSaveError(); }}>{toast || saveError}</button>
+      )}
     </main>
   );
 }

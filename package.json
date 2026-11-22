@@ -1,28 +1,21 @@
 {
-  "name": "local-personal-assistant",
+  "name": "focusflow",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "next start -H 127.0.0.1",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@azure/msal-node": "^3.8.0",
-    "better-sqlite3": "^12.4.1",
-    "drizzle-orm": "^0.44.6",
     "lucide-react": "^0.468.0",
     "next": "^16.4.2",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "rrule": "^2.8.1",
-    "zod": "^4.1.12"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.3",
     "@types/react-dom": "^19.0.2",
