@@ -162,7 +162,7 @@ button:disabled { opacity: .55; cursor: wait; }
   background: #fff; border-color: #d5dfd8;
   box-shadow: 0 6px 20px rgba(25, 49, 39, 0.05);
 }
-.discussPage { width: min(860px, 100%); }
+.discussPage { width: 100%; }
 .compactSection {
   min-width: 0; max-width: 100%; padding: 11px; overflow: hidden;
   border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.85);
@@ -224,7 +224,11 @@ button:disabled { opacity: .55; cursor: wait; }
   flex: none; color: var(--muted); font-size: 11px; font-weight: 550; line-height: 1.2;
   white-space: nowrap;
 }
-.dragHandle { display: grid; place-items: center; width: 18px; color: #9aa59f; cursor: grab; user-select: none; }
+.dragHandle {
+  display: grid; place-items: center; align-self: stretch; width: 18px; color: #9aa59f; cursor: grab;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  touch-action: none; /* lets a finger drag the handle instead of scrolling the page */
+}
 .dragHandle:active { cursor: grabbing; }
 .dropTail { height: 10px; }
 .dropTail.active { box-shadow: inset 0 2px var(--accent); }
@@ -271,7 +275,10 @@ button:disabled { opacity: .55; cursor: wait; }
 .personCard { position: relative; padding: 7px; border: 1px solid var(--line); border-radius: 8px; background: white; }
 .personCard.pinned { border-color: #e5c994; background: #fffdf8; }
 .personCard.dragging { opacity: .45; }
-.personCard.dropBefore::before { content: ""; position: absolute; left: 8px; right: 8px; top: -4px; height: 2px; border-radius: 2px; background: var(--accent); }
+.personCard.dropBefore::before,
+.personCard.dropAfter::after { content: ""; position: absolute; left: 8px; right: 8px; height: 2px; border-radius: 2px; background: var(--accent); }
+.personCard.dropBefore::before { top: -4px; }
+.personCard.dropAfter::after { bottom: -4px; }
 .personCard > div { display: flex; align-items: center; gap: 4px; }
 .personName { flex: 1; min-width: 0; padding: 2px 3px; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 14px; font-weight: 700; }
 .pinButton { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #9aa59f; }
@@ -296,4 +303,37 @@ button:disabled { opacity: .55; cursor: wait; }
   .taskRow select { max-width: 118px; }
   .compactShell { padding: 10px; }
   .appTabs button { font-size: 13px; padding: 8px 4px; }
+}
+
+/* Sign out at the bottom of the page, "Saving…" as a small badge in the bottom-left corner. */
+.appFooter { display: flex; justify-content: center; margin-top: 28px; }
+.saveStatus {
+  position: fixed; left: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); z-index: 20;
+  padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px;
+  background: rgba(255, 255, 255, .92); color: var(--muted); font-size: 11px; pointer-events: none;
+}
+
+/* Notes on the "To discuss" tab: two columns on wide screens, filled top to bottom, left column first. */
+@media (min-width: 900px) {
+  .peopleList { display: block; column-count: 2; column-gap: 12px; }
+  .peopleList > div { break-inside: avoid; padding-bottom: 6px; }
+  .peopleList > div > .horizonLabel { margin-top: 2px; }
+}
+
+/* Phones in portrait (iPhone 16 Pro is 402px wide): more room for the task text. */
+@media (max-width: 600px) {
+  .compactShell { padding: 8px 8px 24px; }
+  .compactShell > .quickCapture { padding: 6px 6px 6px 10px; gap: 8px; }
+  .compactSection { padding: 8px; }
+  .horizonGroup { padding-left: 7px; }
+  .compactTaskList .taskRow { gap: 6px; padding: 6px; }
+  .compactTaskList .taskRow .taskTitle { font-size: 14px; }
+  .compactFocus strong { font-size: 14px; }
+  .compactTaskList select.horizon {
+    width: 82px; max-width: 82px; padding: 4px 15px 4px 6px; font-size: 11px;
+    -webkit-appearance: none; appearance: none;
+    background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M1 1l3 3 3-3' fill='none' stroke='%2368736d' stroke-width='1.3' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 5px center;
+  }
+  .segmented button { min-width: 72px; padding: 6px 10px; font-size: 13px; }
+  .toast { left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); max-width: none; }
 }

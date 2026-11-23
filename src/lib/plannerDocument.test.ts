@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { backupFileName, expiredBackupPaths, retainedBackupNames } from "./backups";
-import { addTask, emptyDocument, patchTask, rollHorizons, viewTasks } from "./plannerDocument";
+import { addTask, deleteTask, emptyDocument, patchTask, rollHorizons, viewTasks, type Horizon } from "./plannerDocument";
 
 describe("horizon rollover", () => {
   it("leaves tasks in place the first time a day is recorded", () => {
@@ -24,7 +24,50 @@ describe("horizon rollover", () => {
   });
 });
 
+describe("week rollover", () => {
+  // 2026-11-20 is a Friday, 2026-11-23 is a Monday.
+  function rollWeek(from: Date, to: Date) {
+    let doc = rollHorizons(emptyDocument(), from).document;
+    for (const horizon of ["this_week", "next_week", "later"] as Horizon[]) {
+      doc = addTask(doc, { title: horizon, horizon, list: "work" }, from);
+    }
+    const rolled = rollHorizons(doc, to).document;
+    return Object.fromEntries(rolled.tasks.map((task) => [task.title, task.horizon]));
+  }
+
+  it("keeps week horizons within the same week", () => {
+    expect(rollWeek(new Date(2026, 10, 23, 9), new Date(2026, 10, 29, 20))).toEqual({
+      this_week: "this_week", next_week: "next_week", later: "later",
+    });
+  });
+
+  it("moves next week to this week and this week to overdue on Monday", () => {
+    expect(rollWeek(new Date(2026, 10, 20, 9), new Date(2026, 10, 23, 0, 5))).toEqual({
+      this_week: "overdue", next_week: "this_week", later: "later",
+    });
+  });
+
+  it("treats Sunday as the end of the week", () => {
+    expect(rollWeek(new Date(2026, 10, 21, 9), new Date(2026, 10, 22, 9))).toEqual({
+      this_week: "this_week", next_week: "next_week", later: "later",
+    });
+  });
+
+  it("moves next week to overdue when a whole week was skipped", () => {
+    expect(rollWeek(new Date(2026, 10, 20, 9), new Date(2026, 10, 30, 9))).toEqual({
+      this_week: "overdue", next_week: "overdue", later: "later",
+    });
+  });
+});
+
 describe("task lists", () => {
+  it("deletes a task completely", () => {
+    let doc = addTask(emptyDocument(), { title: "Лишняя", horizon: "today", list: "work" });
+    doc = addTask(doc, { title: "Нужная", horizon: "today", list: "work" });
+    doc = deleteTask(doc, doc.tasks[0].id);
+    expect(doc.tasks.map((task) => task.title)).toEqual(["Нужная"]);
+  });
+
   it("allows the same title in work and personal lists", () => {
     let doc = addTask(emptyDocument(), { title: "Купить молоко", horizon: "today", list: "work" });
     doc = addTask(doc, { title: "Купить молоко", horizon: "today", list: "personal" });

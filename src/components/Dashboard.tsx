@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Brain,
   Check,
   ChevronsDown,
   ChevronsUp,
@@ -17,6 +16,7 @@ import { formatCompletedAt, sortByCompletedAtDesc } from "@/lib/doneTasks";
 import { applyNoteEnter, prefixFirstNoteLine } from "@/lib/noteList";
 import { nextTaskFlagColor } from "@/lib/taskFlags";
 import { usePlanner } from "@/components/PlannerProvider";
+import { hasFinePointer, startTouchReorder } from "@/lib/touchReorder";
 import type { Horizon, StoredPerson, StoredTask, TaskList } from "@/lib/plannerDocument";
 
 type Task = StoredTask;
@@ -32,6 +32,9 @@ const horizons: Array<[Horizon, string]> = [
   ["next_week", "Next week"],
   ["later", "Later"],
 ];
+
+const deleteOption = "__delete";
+const peopleExpandedKey = "focusflow.peopleExpanded";
 
 const tabs: Array<[Tab, string]> = [
   ["work", "Work"],
@@ -106,20 +109,20 @@ export function Dashboard() {
     }
   }
 
+  async function deleteTask(id: string) {
+    try {
+      await planner.deleteTask(id);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Couldn’t delete the task.");
+    }
+  }
+
   const listed = tab === "discuss" ? [] : tasks.filter((task) => task.list === tab);
   const active = listed.filter((task) => !["done", "archived"].includes(task.status));
   const focus = active.find((task) => task.status === "in_progress") ?? active[0];
 
   return (
     <main className="compactShell">
-      <header className="topbar">
-        <div className="compactBrand">
-          <span className="brandMark"><Brain size={18} /></span>
-          <strong>FocusFlow</strong>
-        </div>
-        {saving && <span className="saveStatus" style={{ marginLeft: "auto", marginRight: 8, fontSize: 12, opacity: 0.6 }}>Saving…</span>}
-        <button type="button" className="signOut" onClick={planner.signOut}>Sign out</button>
-      </header>
       <div className="appTabs" role="tablist" aria-label="Sections">
         {tabs.map(([value, label]) => (
           <button
@@ -149,10 +152,14 @@ export function Dashboard() {
                 <button onClick={() => patchTask(focus.id, { status: "done" })}><Check size={14} /> Done</button>
               </div>
             )}
-            <CompactTaskList key={tab} tasks={listed} onPatch={patchTask} onReorder={reorderTaskList} />
+            <CompactTaskList key={tab} tasks={listed} onPatch={patchTask} onDelete={deleteTask} onReorder={reorderTaskList} />
           </div>
         )
       )}
+      <footer className="appFooter">
+        <button type="button" className="signOut" onClick={planner.signOut}>Sign out</button>
+      </footer>
+      {saving && <span className="saveStatus" role="status">Saving…</span>}
       {(toast || saveError) && (
         <button className="toast" onClick={() => { setToast(""); clearSaveError(); }}>{toast || saveError}</button>
       )}
@@ -217,10 +224,12 @@ function QuickCapture({
 function CompactTaskList({
   tasks,
   onPatch,
+  onDelete,
   onReorder,
 }: {
   tasks: Task[];
   onPatch: (id: string, patch: Record<string, unknown>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
   onReorder: (ids: string[], change?: { movedId: string; horizon: Horizon }) => Promise<void>;
 }) {
   const [filter, setFilter] = useState<"active" | "done">("active");
@@ -233,7 +242,11 @@ function CompactTaskList({
 
   function moveTask(fromId: string, index: number) {
     const from = visible.findIndex((task) => task.id === fromId);
-    if (from < 0 || index < 0 || index > visible.length || from === index || from + 1 === index) return;
+    if (from < 0 || index < 0 || index > visible.length || from === index || from + 1 === index) {
+      setDraggingId(null);
+      setDropIndex(null);
+      return;
+    }
     const source = visible[from];
     const targetHorizon = (index >= visible.length ? visible[visible.length - 1] : visible[index]).horizon;
     const next = [...visible];
@@ -266,6 +279,7 @@ function CompactTaskList({
         dropBefore={filter !== "done" && dropIndex === index}
         dropAfter={filter !== "done" && index === visible.length - 1 && dropIndex === visible.length}
         onPatch={onPatch}
+        onDelete={onDelete}
         onToggleFlag={() => {
           void onPatch(task.id, {
             flagColor: task.flagColor
@@ -280,6 +294,7 @@ function CompactTaskList({
         }}
         onDragOverIndex={(nextIndex) => setDropIndex(nextIndex)}
         onDrop={(nextIndex) => draggingId && moveTask(draggingId, nextIndex)}
+        onTouchDrop={(nextIndex) => moveTask(task.id, nextIndex)}
         index={index}
       />
     );
@@ -309,6 +324,8 @@ function CompactTaskList({
         {filter !== "done" && visible.length > 0 && (
           <div
             className={`dropTail ${dropIndex === visible.length ? "active" : ""}`}
+            data-reorder-index={visible.length}
+            data-reorder-tail=""
             onDragOver={(event) => {
               event.preventDefault();
               setDropIndex(visible.length);
@@ -335,7 +352,24 @@ function PeoplePanel({
 }) {
   const planner = usePlanner();
   const [name, setName] = useState("");
-  const [expandedAll, setExpandedAll] = useState(false);
+  // Remember "Expand all" / "Collapse all" on this device.
+  const [expandedAll, setExpandedAll] = useState(() => {
+    try {
+      return window.localStorage.getItem(peopleExpandedKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  function toggleExpanded() {
+    const next = !expandedAll;
+    setExpandedAll(next);
+    try {
+      window.localStorage.setItem(peopleExpandedKey, next ? "1" : "0");
+    } catch {
+      // Storage can be unavailable (e.g. private mode); the choice then lasts until the page is closed.
+    }
+  }
 
   async function addPerson(event: FormEvent) {
     event.preventDefault();
@@ -366,7 +400,7 @@ function PeoplePanel({
           <button
             type="button"
             className="quietToggle"
-            onClick={() => setExpandedAll((current) => !current)}
+            onClick={toggleExpanded}
           >
             {expandedAll ? <ChevronsUp size={14} /> : <ChevronsDown size={14} />}
             {expandedAll ? "Collapse all" : "Expand all"}
@@ -401,7 +435,11 @@ function PeopleList({
 
   async function movePerson(fromId: string, index: number) {
     const from = people.findIndex((person) => person.id === fromId);
-    if (from < 0 || index < 0 || index > people.length || from === index || from + 1 === index) return;
+    if (from < 0 || index < 0 || index > people.length || from === index || from + 1 === index) {
+      setDraggingId(null);
+      setDropIndex(null);
+      return;
+    }
     const source = people[from];
     const pinned = (index >= people.length ? people[people.length - 1] : people[index]).pinned;
     const next = [...people];
@@ -430,9 +468,11 @@ function PeopleList({
           )}
           <PersonEditor
             person={person}
+            index={index}
             expanded={expandedAll}
             dragging={draggingId === person.id}
             dropBefore={dropIndex === index}
+            dropAfter={index === people.length - 1 && dropIndex === people.length}
             onSave={(patch) => onSave(person.id, patch)}
             onDelete={async () => {
               try {
@@ -449,6 +489,8 @@ function PeopleList({
             }}
             onDragOver={() => setDropIndex(index)}
             onDrop={() => draggingId && void movePerson(draggingId, index)}
+            onTouchOver={(nextIndex) => setDropIndex(nextIndex)}
+            onTouchDrop={(nextIndex) => void movePerson(person.id, nextIndex)}
           />
         </div>
       )) : <div className="miniEmpty">Add a colleague or someone close to you</div>}
@@ -458,26 +500,34 @@ function PeopleList({
 
 function PersonEditor({
   person,
+  index,
   expanded,
   dragging,
   dropBefore,
+  dropAfter,
   onSave,
   onDelete,
   onDragStart,
   onDragEnd,
   onDragOver,
   onDrop,
+  onTouchOver,
+  onTouchDrop,
 }: {
   person: Person;
+  index: number;
   expanded: boolean;
   dragging: boolean;
   dropBefore: boolean;
+  dropAfter: boolean;
   onSave: (patch: Record<string, string | boolean>) => Promise<void>;
   onDelete: () => Promise<void>;
   onDragStart: () => void;
   onDragEnd: () => void;
   onDragOver: () => void;
   onDrop: () => void;
+  onTouchOver: (index: number) => void;
+  onTouchDrop: (index: number) => void;
 }) {
   const [name, setName] = useState(person.name);
   const [topics, setTopics] = useState(person.topics);
@@ -500,7 +550,8 @@ function PersonEditor({
   }, [expanded, topics]);
   return (
     <article
-      className={`personCard ${person.pinned ? "pinned" : ""} ${dragging ? "dragging" : ""} ${dropBefore ? "dropBefore" : ""}`}
+      className={`personCard ${person.pinned ? "pinned" : ""} ${dragging ? "dragging" : ""} ${dropBefore ? "dropBefore" : ""} ${dropAfter ? "dropAfter" : ""}`}
+      data-reorder-index={index}
       onDragOver={(event) => {
         event.preventDefault();
         onDragOver();
@@ -513,8 +564,14 @@ function PersonEditor({
       <div>
         <span
           className="dragHandle"
-          draggable
+          draggable={hasFinePointer()}
           aria-label="Move person"
+          onPointerDown={(event) => startTouchReorder(event, {
+            onStart: onDragStart,
+            onOver: onTouchOver,
+            onDrop: onTouchDrop,
+            onEnd: onDragEnd,
+          })}
           onDragStart={(event) => {
             event.dataTransfer.effectAllowed = "move";
             event.dataTransfer.setData("text/plain", person.id);
@@ -623,11 +680,13 @@ function TaskRow({
   dropBefore,
   dropAfter,
   onPatch,
+  onDelete,
   onToggleFlag,
   onDragStart,
   onDragEnd,
   onDragOverIndex,
   onDrop,
+  onTouchDrop,
 }: {
   task: Task;
   index: number;
@@ -635,11 +694,13 @@ function TaskRow({
   dropBefore: boolean;
   dropAfter: boolean;
   onPatch: (id: string, patch: Record<string, unknown>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
   onToggleFlag: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onDragOverIndex: (index: number) => void;
   onDrop: (index: number) => void;
+  onTouchDrop: (index: number) => void;
 }) {
   const ignoreDrag = useRef(false);
 
@@ -657,6 +718,7 @@ function TaskRow({
   return (
     <article
       className={`taskRow ${task.status === "done" ? "done" : ""} ${dragging ? "dragging" : ""} ${dropBefore ? "dropBefore" : ""} ${dropAfter ? "dropAfter" : ""}`}
+      data-reorder-index={task.status === "done" ? undefined : index}
       onDragOver={(event) => {
         event.preventDefault();
         const bounds = event.currentTarget.getBoundingClientRect();
@@ -670,7 +732,7 @@ function TaskRow({
     >
       <span
         className="dragHandle"
-        draggable={task.status !== "done"}
+        draggable={task.status !== "done" && hasFinePointer()}
         aria-label={task.status === "done" ? "Double-click to flag" : "Move task. Double-click to flag"}
         title={task.status === "done" ? "Double-click to flag" : "Drag to reorder. Double-click to flag"}
         onDoubleClick={(event) => {
@@ -681,6 +743,12 @@ function TaskRow({
         }}
         onDragStart={(event) => startDrag(event)}
         onDragEnd={onDragEnd}
+        onPointerDown={(event) => task.status !== "done" && startTouchReorder(event, {
+          onStart: onDragStart,
+          onOver: onDragOverIndex,
+          onDrop: onTouchDrop,
+          onEnd: onDragEnd,
+        })}
       >
         <GripVertical size={14} />
       </span>
@@ -693,11 +761,21 @@ function TaskRow({
       <select
         className={`horizon horizon-${task.horizon}`}
         value={task.horizon}
-        onChange={(event) => onPatch(task.id, { horizon: event.target.value })}
+        onChange={(event) => {
+          const value = event.target.value;
+          if (value !== deleteOption) {
+            void onPatch(task.id, { horizon: value });
+            return;
+          }
+          // The list goes back to the current due date by itself; delete only after confirmation.
+          if (window.confirm(`Delete the task “${task.title}”? This can’t be undone.`)) void onDelete(task.id);
+        }}
         onDragStart={(event) => event.preventDefault()}
         aria-label="Due"
       >
         {horizons.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        <option disabled>──────</option>
+        <option value={deleteOption}>Delete task…</option>
       </select>
       <button
         type="button"

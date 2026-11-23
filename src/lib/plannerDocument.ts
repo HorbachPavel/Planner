@@ -1,4 +1,4 @@
-import { daysBetweenLocalDates, localDateKey } from "./localDate";
+import { daysBetweenLocalDates, localDateKey, weeksBetweenLocalDates } from "./localDate";
 
 export const horizons = ["overdue", "today", "tomorrow", "this_week", "next_week", "later"] as const;
 export type Horizon = (typeof horizons)[number];
@@ -56,16 +56,31 @@ export function rollHorizons(doc: PlannerDocument, now = new Date()): { document
   }
   const days = daysBetweenLocalDates(doc.horizonRolloverDate, today);
   if (days <= 0) return { document: doc, changed: false };
+  // Weeks start on Monday. 1 = a new week has started, 2+ = at least one whole week was skipped.
+  const weeks = weeksBetweenLocalDates(doc.horizonRolloverDate, today);
   const stamp = now.toISOString();
   const tasks = doc.tasks.map((task) => {
     if (task.status === "done" || task.status === "archived") return task;
-    if (task.horizon === "today") return { ...task, horizon: "overdue" as const, updatedAt: stamp };
-    if (task.horizon === "tomorrow") {
-      return { ...task, horizon: (days === 1 ? "today" : "overdue") as Horizon, updatedAt: stamp };
-    }
-    return task;
+    const horizon = nextHorizon(task.horizon, days, weeks);
+    return horizon === task.horizon ? task : { ...task, horizon, updatedAt: stamp };
   });
   return { document: { ...doc, horizonRolloverDate: today, tasks }, changed: true };
+}
+
+function nextHorizon(horizon: Horizon, days: number, weeks: number): Horizon {
+  switch (horizon) {
+    case "today":
+      return "overdue";
+    case "tomorrow":
+      return days === 1 ? "today" : "overdue";
+    case "this_week":
+      return weeks >= 1 ? "overdue" : "this_week";
+    case "next_week":
+      if (weeks === 1) return "this_week";
+      return weeks >= 2 ? "overdue" : "next_week";
+    default:
+      return horizon;
+  }
 }
 
 export function viewTasks(doc: PlannerDocument): StoredTask[] {
@@ -125,6 +140,10 @@ export function patchTask(doc: PlannerDocument, id: string, patch: Partial<Store
     completedAt: status === "done" ? (existing.completedAt ?? stamp) : null,
   };
   return { ...doc, tasks: doc.tasks.map((task) => (task.id === id ? next : task)) };
+}
+
+export function deleteTask(doc: PlannerDocument, id: string): PlannerDocument {
+  return { ...doc, tasks: doc.tasks.filter((task) => task.id !== id) };
 }
 
 export function reorderTasks(

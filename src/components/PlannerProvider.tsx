@@ -1,11 +1,13 @@
 "use client";
 
+import { Brain } from "lucide-react";
 import { FormEvent, ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { GithubSaveError, readDocument, writeDocument } from "@/lib/githubStore";
 import {
   addPerson,
   addTask,
   deletePerson,
+  deleteTask,
   emptyDocument,
   patchPerson,
   patchTask,
@@ -40,6 +42,7 @@ type PlannerClient = {
   load: () => Promise<{ tasks: StoredTask[]; people: StoredPerson[] }>;
   createTask: (input: { title: string; horizon: Horizon; list: TaskList }) => Promise<void>;
   patchTask: (id: string, patch: Partial<StoredTask>) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
   reorderTasks: (ids: string[], change?: { movedId: string; horizon: Horizon }) => Promise<void>;
   createPerson: (name: string) => Promise<void>;
   patchPerson: (id: string, patch: Partial<Pick<StoredPerson, "name" | "topics" | "pinned">>) => Promise<void>;
@@ -210,6 +213,7 @@ function PlannerProvider({ token, onSignOut, children }: { token: string; onSign
       }),
       createTask: (input: { title: string; horizon: Horizon; list: TaskList }) => change((doc) => addTask(doc, input)),
       patchTask: (id: string, patch: Partial<StoredTask>) => change((doc) => patchTask(doc, id, patch)),
+      deleteTask: (id: string) => change((doc) => deleteTask(doc, id)),
       reorderTasks: (ids: string[], moved?: { movedId: string; horizon: Horizon }) => change((doc) => reorderTasks(doc, ids, moved)),
       createPerson: (name: string) => change((doc) => addPerson(doc, name)),
       patchPerson: (id: string, patch: Partial<Pick<StoredPerson, "name" | "topics" | "pinned">>) => change((doc) => patchPerson(doc, id, patch)),
@@ -254,7 +258,7 @@ function TokenForm({ onSave }: { onSave: (token: string) => void }) {
   return (
     <main className="tokenGate">
       <form className="tokenCard" onSubmit={submit}>
-        <span className="brandMark">F</span>
+        <span className="brandMark"><Brain size={22} /></span>
         <h1>FocusFlow</h1>
         <p>Enter the GitHub token for the private list repository. It stays in this browser.</p>
         <input
