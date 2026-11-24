@@ -19,6 +19,7 @@ export type StoredTask = {
   updatedAt: string;
 };
 
+/** A card on the "Notes & People" tab: a person with topics to discuss, or any note. */
 export type StoredPerson = {
   id: string;
   name: string;
@@ -162,7 +163,7 @@ export function reorderTasks(
 
 export function addPerson(doc: PlannerDocument, name: string, now = new Date()): PlannerDocument {
   const clean = name.trim();
-  if (!clean) throw new Error("Enter a name.");
+  if (!clean) throw new Error("Enter a name or a title.");
   const stamp = now.toISOString();
   const person: StoredPerson = {
     id: crypto.randomUUID(),

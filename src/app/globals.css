@@ -118,7 +118,7 @@ button:disabled { opacity: .55; cursor: wait; }
 .settingsCard .button { justify-self: start; }
 .toast { position: fixed; right: 24px; bottom: 24px; max-width: 440px; padding: 13px 17px; border: 0; border-radius: 12px; background: #1f3029; color: white; box-shadow: var(--shadow); }
 
-.compactShell { width: min(1440px, 100%); min-height: 100vh; margin: 0 auto; padding: 14px 22px 40px; overflow-x: hidden; }
+.compactShell { width: min(1440px, 100%); min-height: 100vh; margin: 0 auto; padding: 14px 22px 40px; overflow-x: clip; /* "clip", not "hidden": keeps the sticky tab bar working */ }
 .topbar { height: 42px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .signOut { border: 0; background: transparent; color: var(--muted); font-size: 12px; }
 .tokenGate { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
@@ -149,6 +149,9 @@ button:disabled { opacity: .55; cursor: wait; }
 .compactShell > .quickCapture button:hover { background: #f0d4a4; border-color: #d4a85a; color: #5c3f16; }
 .compactShell > .quickCapture button:active { background: #e7c48a; border-color: #c9963e; color: #4e3412; }
 .appTabs {
+  /* Stays at the top of the screen while scrolling. The wide shadow in the page colour hides content passing behind it. */
+  position: sticky; top: 0; z-index: 15;
+  box-shadow: 0 0 0 8px var(--bg), 0 10px 14px -10px rgba(25, 49, 39, .25);
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-bottom: 14px;
   padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: white;
 }
@@ -305,8 +308,21 @@ button:disabled { opacity: .55; cursor: wait; }
   .appTabs button { font-size: 13px; padding: 8px 4px; }
 }
 
-/* Sign out at the bottom of the page, "Saving…" as a small badge in the bottom-left corner. */
-.appFooter { display: flex; justify-content: center; margin-top: 28px; }
+/* Reload, Demo and Sign out at the bottom of the page, "Saving…" as a small badge in the bottom-left corner. */
+.appFooter { display: flex; justify-content: center; gap: 6px; margin-top: 28px; }
+.footerButton {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; border: 1px solid transparent;
+  border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px;
+}
+.footerButton:hover { border-color: var(--line); background: white; }
+.footerButton.active { border-color: #e5c994; background: #fff4df; color: #8b642d; }
+
+/* Demo mode: saved text is blurred (still there, just unreadable).
+   The fields for typing a new task or card stay readable. */
+.demoMode .taskTitle,
+.demoMode .compactFocus strong,
+.demoMode .personName,
+.demoMode .personCard textarea { filter: blur(5px); }
 .saveStatus {
   position: fixed; left: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); z-index: 20;
   padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px;

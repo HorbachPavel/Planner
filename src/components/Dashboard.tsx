@@ -5,8 +5,11 @@ import {
   ChevronsDown,
   ChevronsUp,
   GripVertical,
+  Eye,
+  EyeOff,
   Pin,
   Plus,
+  RotateCw,
   Sparkles,
   Trash2,
   Users,
@@ -35,11 +38,28 @@ const horizons: Array<[Horizon, string]> = [
 
 const deleteOption = "__delete";
 const peopleExpandedKey = "focusflow.peopleExpanded";
+const demoKey = "focusflow.demo";
+
+function readFlag(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveFlag(key: string, value: boolean) {
+  try {
+    window.localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    // Storage can be unavailable (e.g. private mode); the choice then lasts until the page is closed.
+  }
+}
 
 const tabs: Array<[Tab, string]> = [
   ["work", "Work"],
   ["personal", "Personal"],
-  ["discuss", "To discuss"],
+  ["discuss", "Notes & People"],
 ];
 
 // The screen updates by itself after each change, so there is nothing to reload.
@@ -52,6 +72,13 @@ export function Dashboard() {
   const [tab, setTab] = useState<Tab>("work");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
+  // Demo mode blurs all personal text so the app can be shown to other people.
+  const [demo, setDemo] = useState(() => readFlag(demoKey));
+
+  function toggleDemo() {
+    setDemo(!demo);
+    saveFlag(demoKey, !demo);
+  }
 
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setLoading(true);
@@ -122,7 +149,7 @@ export function Dashboard() {
   const focus = active.find((task) => task.status === "in_progress") ?? active[0];
 
   return (
-    <main className="compactShell">
+    <main className={`compactShell ${demo ? "demoMode" : ""}`}>
       <div className="appTabs" role="tablist" aria-label="Sections">
         {tabs.map(([value, label]) => (
           <button
@@ -152,12 +179,24 @@ export function Dashboard() {
                 <button onClick={() => patchTask(focus.id, { status: "done" })}><Check size={14} /> Done</button>
               </div>
             )}
-            <CompactTaskList key={tab} tasks={listed} onPatch={patchTask} onDelete={deleteTask} onReorder={reorderTaskList} />
+            <CompactTaskList key={tab} tasks={listed} demo={demo} onPatch={patchTask} onDelete={deleteTask} onReorder={reorderTaskList} />
           </div>
         )
       )}
       <footer className="appFooter">
-        <button type="button" className="signOut" onClick={planner.signOut}>Sign out</button>
+        <button type="button" className="footerButton" onClick={() => window.location.reload()} title="Reload the page (like Command+R)">
+          <RotateCw size={12} /> Reload
+        </button>
+        <button
+          type="button"
+          className={`footerButton ${demo ? "active" : ""}`}
+          onClick={toggleDemo}
+          aria-pressed={demo}
+          title="Blur task titles and notes so the screen can be shown to others"
+        >
+          {demo ? <EyeOff size={12} /> : <Eye size={12} />} Demo
+        </button>
+        <button type="button" className="footerButton" onClick={planner.signOut}>Sign out</button>
       </footer>
       {saving && <span className="saveStatus" role="status">Saving…</span>}
       {(toast || saveError) && (
@@ -223,11 +262,13 @@ function QuickCapture({
 
 function CompactTaskList({
   tasks,
+  demo,
   onPatch,
   onDelete,
   onReorder,
 }: {
   tasks: Task[];
+  demo: boolean;
   onPatch: (id: string, patch: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onReorder: (ids: string[], change?: { movedId: string; horizon: Horizon }) => Promise<void>;
@@ -278,6 +319,7 @@ function CompactTaskList({
         dragging={draggingId === task.id}
         dropBefore={filter !== "done" && dropIndex === index}
         dropAfter={filter !== "done" && index === visible.length - 1 && dropIndex === visible.length}
+        demo={demo}
         onPatch={onPatch}
         onDelete={onDelete}
         onToggleFlag={() => {
@@ -371,13 +413,13 @@ function PeoplePanel({
     }
   }
 
-  async function addPerson(event: FormEvent) {
+  async function addCard(event: FormEvent) {
     event.preventDefault();
     if (!name.trim()) return;
     try {
       await planner.createPerson(name);
     } catch (error) {
-      return onError(error instanceof Error ? error.message : "Couldn’t add the person.");
+      return onError(error instanceof Error ? error.message : "Couldn’t add the card.");
     }
     setName("");
     await onChanged();
@@ -395,7 +437,7 @@ function PeoplePanel({
   return (
     <section className="compactSection peoplePanel discussPage">
       <div className="compactSectionHead">
-        <h2><Users size={16} /> To discuss <small>{people.length}</small></h2>
+        <h2><Users size={16} /> Notes &amp; People <small>{people.length}</small></h2>
         {people.length > 0 && (
           <button
             type="button"
@@ -407,9 +449,14 @@ function PeoplePanel({
           </button>
         )}
       </div>
-      <form className="addPerson" onSubmit={addPerson}>
-        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Add a person…" />
-        <button className="iconButton" title="Add"><Plus size={15} /></button>
+      <form className="addPerson" onSubmit={addCard}>
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Add a person or a note…"
+          aria-label="New person or note"
+        />
+        <button className="iconButton" type="submit" title="Add"><Plus size={15} /></button>
       </form>
       <PeopleList people={people} expandedAll={expandedAll} onSave={savePerson} onChanged={onChanged} onError={onError} />
     </section>
@@ -493,7 +540,7 @@ function PeopleList({
             onTouchDrop={(nextIndex) => void movePerson(person.id, nextIndex)}
           />
         </div>
-      )) : <div className="miniEmpty">Add a colleague or someone close to you</div>}
+      )) : <div className="miniEmpty">Add a person to discuss things with, or a note</div>}
     </div>
   );
 }
@@ -618,7 +665,7 @@ function PersonEditor({
           setTopics(next.value);
         }}
         onBlur={() => topics !== person.topics && void onSave({ topics })}
-        placeholder="Topics, questions, promises…"
+        placeholder="Topics, questions, notes…"
       />
     </article>
   );
@@ -679,6 +726,7 @@ function TaskRow({
   dragging,
   dropBefore,
   dropAfter,
+  demo,
   onPatch,
   onDelete,
   onToggleFlag,
@@ -693,6 +741,7 @@ function TaskRow({
   dragging: boolean;
   dropBefore: boolean;
   dropAfter: boolean;
+  demo: boolean;
   onPatch: (id: string, patch: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onToggleFlag: () => void;
@@ -768,7 +817,8 @@ function TaskRow({
             return;
           }
           // The list goes back to the current due date by itself; delete only after confirmation.
-          if (window.confirm(`Delete the task “${task.title}”? This can’t be undone.`)) void onDelete(task.id);
+          const name = demo ? "this task" : `the task “${task.title}”`;
+          if (window.confirm(`Delete ${name}? This can’t be undone.`)) void onDelete(task.id);
         }}
         onDragStart={(event) => event.preventDefault()}
         aria-label="Due"
