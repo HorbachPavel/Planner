@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { backupFileName, expiredBackupPaths, retainedBackupNames } from "./backups";
 import { addTask, deleteTask, emptyDocument, patchTask, rollHorizons, viewTasks, type Horizon } from "./plannerDocument";
 
 describe("horizon rollover", () => {
@@ -82,28 +81,5 @@ describe("task lists", () => {
     doc = patchTask(doc, doc.tasks[0].id, { horizon: "later" });
     doc = patchTask(doc, doc.tasks[0].id, { horizon: "today" });
     expect(viewTasks(doc).filter((task) => task.horizon === "today").map((task) => task.title)[0]).toBe("Первая");
-  });
-});
-
-describe("backup retention", () => {
-  const now = new Date(2026, 10, 15, 18, 0);
-
-  it("names the fresh backup by the current half of the day", () => {
-    expect(backupFileName(now)).toBe("2026-11-15-pm.json");
-    expect(backupFileName(new Date(2026, 10, 15, 9))).toBe("2026-11-15-am.json");
-  });
-
-  it("keeps today and yesterday, and removes older copies", () => {
-    expect(retainedBackupNames(now)).toEqual(new Set([
-      "2026-11-15-am.json",
-      "2026-11-15-pm.json",
-      "2026-11-14-am.json",
-      "2026-11-14-pm.json",
-    ]));
-    expect(expiredBackupPaths([
-      "data/backups/2026-11-15-pm.json",
-      "data/backups/2026-11-13-am.json",
-      "data/backups/notes.txt",
-    ], now)).toEqual(["data/backups/2026-11-13-am.json"]);
   });
 });

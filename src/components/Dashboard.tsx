@@ -12,12 +12,14 @@ import {
   RotateCw,
   Sparkles,
   Trash2,
+  UserRound,
   Users,
 } from "lucide-react";
 import { DragEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { formatCompletedAt, sortByCompletedAtDesc } from "@/lib/doneTasks";
 import { applyNoteEnter, prefixFirstNoteLine } from "@/lib/noteList";
 import { nextTaskFlagColor } from "@/lib/taskFlags";
+import { AccountPanel } from "@/components/AccountPanel";
 import { usePlanner } from "@/components/PlannerProvider";
 import { hasFinePointer, startTouchReorder } from "@/lib/touchReorder";
 import type { Horizon, StoredPerson, StoredTask, TaskList } from "@/lib/plannerDocument";
@@ -68,10 +70,12 @@ const noChange = async () => {};
 export function Dashboard() {
   const planner = usePlanner();
   // The lists live in PlannerProvider and update instantly after every change.
-  const { tasks, people, saving, saveError, clearSaveError } = planner;
+  const { tasks, people, saving, saveError, clearSaveError, load } = planner;
   const [tab, setTab] = useState<Tab>("work");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
+  const [accountOpen, setAccountOpen] = useState(false);
+  const closeAccount = useCallback(() => setAccountOpen(false), []);
   // Demo mode blurs all personal text so the app can be shown to other people.
   const [demo, setDemo] = useState(() => readFlag(demoKey));
 
@@ -83,13 +87,13 @@ export function Dashboard() {
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setLoading(true);
     try {
-      await planner.load();
+      await load();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Couldn’t load the lists.");
     } finally {
       if (!options?.silent) setLoading(false);
     }
-  }, [planner]);
+  }, [load]); // only "load": depending on the whole planner would reload after every change
 
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), 0);
@@ -196,8 +200,11 @@ export function Dashboard() {
         >
           {demo ? <EyeOff size={12} /> : <Eye size={12} />} Demo
         </button>
-        <button type="button" className="footerButton" onClick={planner.signOut}>Sign out</button>
+        <button type="button" className="footerButton" onClick={() => setAccountOpen(true)}>
+          <UserRound size={12} /> Account
+        </button>
       </footer>
+      {accountOpen && <AccountPanel onClose={closeAccount} />}
       {saving && <span className="saveStatus" role="status">Saving…</span>}
       {(toast || saveError) && (
         <button className="toast" onClick={() => { setToast(""); clearSaveError(); }}>{toast || saveError}</button>
@@ -578,8 +585,19 @@ function PersonEditor({
 }) {
   const [name, setName] = useState(person.name);
   const [topics, setTopics] = useState(person.topics);
+  const [savedName, setSavedName] = useState(person.name);
+  const [savedTopics, setSavedTopics] = useState(person.topics);
   const topicsRef = useRef<HTMLTextAreaElement>(null);
   const cursorRef = useRef<number | null>(null);
+  // Show changes made on another device, unless this field is being edited here.
+  if (savedName !== person.name) {
+    setSavedName(person.name);
+    if (name === savedName) setName(person.name);
+  }
+  if (savedTopics !== person.topics) {
+    setSavedTopics(person.topics);
+    if (topics === savedTopics) setTopics(person.topics);
+  }
 
   useLayoutEffect(() => {
     const element = topicsRef.current;
